@@ -47,14 +47,8 @@ Follow the **Template and authoring rules** section of your prompt exactly:
 
 ## The file must stand alone
 
-The feature file you write must be buildable on its own. The test for any reference is simple: **does the thing you are pointing at travel with the spec?**
+Note the situation you are in: your prompt is saturated with PRD content and PRD identifiers, and the implementer who builds this feature will have none of it. They will have your file, the sibling `FT-XXX` specs and the workspace — not the PRD. It is easy to carry your own context into the file by writing a reference the reader cannot resolve.
 
-- **The PRD does not travel with it.** The implementer will not have the PRD and cannot resolve a reference to it. Your prompt is full of PRD content and PRD identifiers; the file you produce must not inherit that dependency.
-- **Sibling feature files do travel with it.** The other `FT-XXX` specs sit alongside yours in the same directory, so referring to them is legitimate and expected — dependencies between features are real and must be visible.
-- **Files in the workspace travel with it.** Reference-data files, exports, and similar artefacts can be cited by their workspace-relative path, e.g. `reference-data/SAM-ref-data.csv`.
+The standalone rule in the **Template and authoring rules** section of your prompt is authoritative on this — apply it as written. It governs which references are legitimate, and when a PRD citation is provenance rather than a defect.
 
-Restate every fact you use. A business rule, validation, entity attribute, workflow step, or open question drawn from your prompt must appear in the file in full — trigger, condition, outcome, and any error or message text. Having restated it, you may cite its PRD identifier afterwards as provenance: `(PRD BR-095)` following the complete rule is correct and encouraged. `(PRD BR-095)` standing in place of the rule is a defect, as are "the PRD states…", "see PRD Section 4.25", and bare pointers like "(PRD Open Question 20)".
-
-Apply the same restate-then-attribute habit to the references that *are* permitted. "Reference data owned by FT-001" or "delivered by FT-006" is good: it says what the thing is, then attributes ownership. Do not make a sibling spec or an external file carry meaning on its own — if a rule your feature enforces lives in FT-001, state the rule here and attribute it, rather than telling the reader to go and look. Where you cite a data file, describe the shape you rely on — the columns, codes, or fields — so the reader knows what to expect before opening it.
-
-Before you finish, reread the file as someone who has the sibling specs and the workspace files but has never seen the PRD. Any sentence they could not act on is incomplete — fix it by writing the missing substance in, not by removing the citation.
+Before you call Write, review the content you have composed as a reader who has the sibling specs and the workspace files but has never seen the PRD. Any sentence they could not act on is incomplete — fix it by writing the missing substance in, not by removing the citation. Do this from the draft held in your context; you have no Read tool and do not need one.
