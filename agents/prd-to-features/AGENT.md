@@ -467,7 +467,7 @@ This feature is considered done when all of the following are satisfied:
 
 ## 21. Glossary
 
-*Define terms specific to this feature that may not be obvious to all team members. Only include terms introduced or redefined within the scope of this feature.*
+*Define terms specific to this feature that may not be obvious to all team members. Include every domain term this file uses that its reader could not otherwise resolve, including terms drawn from the PRD glossary — the implementer has no PRD to consult. Restricting this table to terms this feature introduces would leave the core domain vocabulary undefined for a reader who has no PRD.*
 
 | Term | Definition |
 |------|-----------|
