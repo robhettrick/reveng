@@ -28,6 +28,7 @@ Your prompt will contain the following, supplied by the prd-to-features agent:
 
 - **Feature metadata** — Feature ID, feature title, MoSCoW priority, output file path, upstream/downstream feature IDs, first user story ID
 - **Feature-specific PRD content** — verbatim extracts from the PRD sections relevant to this feature (bounded context, screens, workflows, business rules, entities, pain points)
+- **Relevant PRD open questions** — the full text of any PRD open questions bearing on this feature, to be restated as local rows in your Open Questions section
 - **Shared PRD context** — actors/personas table, glossary, and global business rules that apply across features
 - **Template and authoring rules** — the complete feature template and the rules for filling it in, including the ASCII wireframe rules
 
@@ -43,3 +44,11 @@ Follow the **Template and authoring rules** section of your prompt exactly:
 - Apply every authoring rule in order — in particular the ASCII wireframe rules, which require Unicode box-drawing characters, single-line borders for existing components, double-line borders for new/changed components, and numbered callouts with a key.
 - Where information is missing or ambiguous, add a row to the Open Questions section rather than inventing facts.
 - Use the Feature ID, story IDs, and dependencies supplied — do not invent or reassign them.
+
+## The file must stand alone
+
+The feature file you write is the **only** document its implementer will read. They will not have the PRD, and they cannot resolve a reference to it. Your prompt is full of PRD content and PRD identifiers; the file you produce must not inherit that dependency.
+
+Restate every fact you use. A business rule, validation, entity attribute, workflow step, or open question drawn from your prompt must appear in the file in full — trigger, condition, outcome, and any error or message text. Having restated it, you may cite its PRD identifier afterwards as provenance: `(PRD BR-095)` following the complete rule is correct and encouraged. `(PRD BR-095)` standing in place of the rule is a defect, as are "the PRD states…", "see PRD Section 4.25", and bare pointers like "(PRD Open Question 20)".
+
+Before you finish, reread the file as someone who has never seen the PRD. Any sentence they could not act on is incomplete — fix it by writing the missing substance in, not by removing the citation.

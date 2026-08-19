@@ -130,6 +130,9 @@ Each `feature-writer` agent must receive a fully self-contained prompt. Construc
 **Feature-specific PRD content:**
 Paste the verbatim text of every PRD section relevant to this feature — bounded context definition, relevant screens, relevant workflows, relevant business rules, relevant entities and attributes, relevant legacy pain points. Do not summarise. Extract and paste the actual PRD text.
 
+**Relevant PRD open questions:**
+Paste the full text of every PRD open question that bears on this feature — the question, its context, and its impact. The feature-writer must restate these as local rows in its own Open Questions section, so it needs the wording, not the identifier. A worker given only "Open Question 20" will emit an unresolvable pointer into a file whose reader has no PRD.
+
 **Shared PRD context:**
 Paste the following from the PRD verbatim, for every agent — this ensures clean feature boundaries:
 - Full actors/personas table
@@ -160,18 +163,24 @@ The content below is what you paste verbatim into every feature-writer prompt un
 3. Write for the new system implementation — describe what the re-engineered application should do, not what the legacy system does. Use the legacy system as a reference for like-for-like functionality, but frame everything as forward-looking.
 4. Adopt the ubiquitous language of the domain. Use terminology from the PRD consistently.
 5. Each feature should be self-contained and deliverable independently where possible.
-6. User stories must follow the format: "As a [role], I want to [action], so that [benefit]" with acceptance criteria in Given/When/Then format.
-7. The UI/Layout section must be verbose enough that a designer or developer could infer a mockup from the text alone. For core workflows, describe every field, label, position, and interaction state. For secondary workflows, describe logical groupings (panels, tabs, forms) with field lists.
-8. Acceptance criteria must be written per story in Given/When/Then (Gherkin) format.
-9. Exclude performance or security testing from acceptance criteria.
-10. Surface any legacy pain points, bugs, workarounds, or frustrations from the supplied PRD content as improvement opportunities in the Legacy Pain Points section.
-11. Use the Feature ID supplied — do not assign a new one.
-12. Assign user story IDs sequentially starting from the first US-XXX number supplied in your prompt. Story IDs must be globally sequential across all features — use exactly the starting number given.
-13. Use MoSCoW prioritisation (Must, Should, Could, Won't) for the feature and for individual stories.
-14. Estimate effort in person-days for a single developer.
-15. Increment the Open Questions count in the metadata whenever you add a question to the Open Questions section.
-16. Populate Upstream Features and Downstream Features from the dependency IDs supplied in your prompt.
-17. Each user story must include ASCII wireframes between the story statement and the acceptance criteria:
+6. **The feature file must stand alone.** The implementer who builds this feature will read your file and nothing else — they will not have the PRD. Every fact needed to design, build, and test the feature must appear in full within the file itself. Specifically:
+    - Never defer meaning to the PRD. Phrases such as "as described in the PRD", "the PRD states", "see PRD Section 4.25", or "(PRD Open Question 16)" are only acceptable when the substance being referred to is already written out in full at that point in your file.
+    - Where a business rule, entity attribute, workflow step, validation, or open question comes from the PRD, restate it in full — the trigger, the condition, the outcome, and the error or message text — then cite the PRD identifier after it as provenance. `(PRD BR-095)` following a complete restatement of the rule is correct and encouraged; `(PRD BR-095)` in place of the rule is not.
+    - Inherited open questions must be restated as local questions. If the PRD content supplied raises an unresolved question that affects this feature, write the question, its context, and its impact out in your own Open Questions table. Do not emit a bare pointer such as "(PRD Open Question 20)" — the reader cannot resolve it.
+    - Justify the feature's priority on its own terms — the user value, statutory obligation, or dependency position. Do not justify it by citing the PRD's own criticality rating for a bounded context.
+    - Test before you finish: if a reader with no access to the PRD could not act on a sentence, that sentence is incomplete.
+7. User stories must follow the format: "As a [role], I want to [action], so that [benefit]" with acceptance criteria in Given/When/Then format.
+8. The UI/Layout section must be verbose enough that a designer or developer could infer a mockup from the text alone. For core workflows, describe every field, label, position, and interaction state. For secondary workflows, describe logical groupings (panels, tabs, forms) with field lists.
+9. Acceptance criteria must be written per story in Given/When/Then (Gherkin) format.
+10. Exclude performance or security testing from acceptance criteria.
+11. Surface any legacy pain points, bugs, workarounds, or frustrations from the supplied PRD content as improvement opportunities in the Legacy Pain Points section.
+12. Use the Feature ID supplied — do not assign a new one.
+13. Assign user story IDs sequentially starting from the first US-XXX number supplied in your prompt. Story IDs must be globally sequential across all features — use exactly the starting number given.
+14. Use MoSCoW prioritisation (Must, Should, Could, Won't) for the feature and for individual stories.
+15. Estimate effort in person-days for a single developer.
+16. Increment the Open Questions count in the metadata whenever you add a question to the Open Questions section.
+17. Populate Upstream Features and Downstream Features from the dependency IDs supplied in your prompt.
+18. Each user story must include ASCII wireframes between the story statement and the acceptance criteria:
     - Produce one wireframe per distinct screen or view the story touches.
     - For the **first story** in the feature, show the full page context (header, navigation, main content area, footer). For **subsequent stories**, show only the feature area affected.
     - Use Unicode box-drawing characters for structure: `┌ ┐ └ ┘ ─ │ ├ ┤ ┬ ┴ ┼`
@@ -197,9 +206,9 @@ The content below is what you paste verbatim into every feature-writer prompt un
 | **Downstream Features** | FT-YYY, FT-ZZZ                                                                                                                 |
 | **Feature Name**        | *Repeat the feature title*                                                                                                     |
 | **Owner**               | *Identify the most appropriate team or role from the PRD actors*                                                               |
-| **Priority**            | *Assign MoSCoW priority: Must / Should / Could / Won't — justify based on the PRD criticality of the relevant bounded context* |
+| **Priority**            | *Assign MoSCoW priority: Must / Should / Could / Won't — justify in terms of user value, statutory obligation, or dependency position, stated so the justification stands without the PRD to hand* |
 | **Last Updated**        | *Insert today's date in YYYY-MM-DD format*                                                                                     |
-| **PRD Reference**       | *Cite the specific PRD section(s) this feature derives from, e.g. "Section 4.2 — Search Repository Workflow"*                  |
+| **Source Reference**    | *Provenance only — cite the PRD section(s) this feature derives from, e.g. "Section 4.2 — Search Repository Workflow". Nothing in this file may depend on the reader following this reference* |
 | **Open Questions**      | *Count of unresolved questions listed in the Open Questions section below*                                                     |
 
 ---
