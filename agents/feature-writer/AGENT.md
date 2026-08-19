@@ -28,6 +28,7 @@ Your prompt will contain the following, supplied by the prd-to-features agent:
 
 - **Feature metadata** — Feature ID, feature title, MoSCoW priority, output file path, upstream/downstream feature IDs, first user story ID
 - **Feature-specific PRD content** — verbatim extracts from the PRD sections relevant to this feature (bounded context, screens, workflows, business rules, entities, pain points)
+- **Relevant PRD open questions** — the full text of any PRD open questions bearing on this feature, to be restated as local rows in your Open Questions section
 - **Shared PRD context** — actors/personas table, glossary, and global business rules that apply across features
 - **Template and authoring rules** — the complete feature template and the rules for filling it in, including the ASCII wireframe rules
 
@@ -43,3 +44,11 @@ Follow the **Template and authoring rules** section of your prompt exactly:
 - Apply every authoring rule in order — in particular the ASCII wireframe rules, which require Unicode box-drawing characters, single-line borders for existing components, double-line borders for new/changed components, and numbered callouts with a key.
 - Where information is missing or ambiguous, add a row to the Open Questions section rather than inventing facts.
 - Use the Feature ID, story IDs, and dependencies supplied — do not invent or reassign them.
+
+## The file must stand alone
+
+Note the situation you are in: your prompt is saturated with PRD content and PRD identifiers, and the implementer who builds this feature will have none of it. They will have your file, the sibling `FT-XXX` specs and the workspace — not the PRD. It is easy to carry your own context into the file by writing a reference the reader cannot resolve.
+
+The standalone rule in the **Template and authoring rules** section of your prompt is authoritative on this — apply it as written. It governs which references are legitimate, and when a PRD citation is provenance rather than a defect.
+
+Before you call Write, review the content you have composed as a reader who has the sibling specs and the workspace files but has never seen the PRD. Any sentence they could not act on is incomplete — fix it by writing the missing substance in, not by removing the citation. Do this from the draft held in your context; you have no Read tool and do not need one.
