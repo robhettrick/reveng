@@ -5,7 +5,7 @@ description: >
   and adapts to it. Use this agent to extract schema, named routines
   (stored procedures / functions), triggers, and constraints from database
   scripts and inline SQL under src/ for downstream PRD generation.
-tools: Read, Write, Glob, Grep, Bash(mkdir*)
+tools: Read, Write, Edit, Glob, Grep, Bash(mkdir*), Bash(cat >> output/*)
 memory: project
 ---
 
@@ -128,7 +128,7 @@ Begin the output file with a metadata block listing every input file that was re
 -->
 ```
 
-Structure the file with the seven sections below. **All seven top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No stored procedures or functions were found in the database code." or "Triggers are not supported by the detected database technology.").
+Structure the file with the 8 sections below. **All 8 top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No stored procedures or functions were found in the database code." or "Triggers are not supported by the detected database technology.").
 
 ### 1. Schema Overview
 
@@ -250,10 +250,35 @@ Status values: matched, orphaned (defined but unreferenced), missing (referenced
 
 SQL Type values: SELECT, INSERT, UPDATE, DELETE, DDL, EXEC / CALL.
 
+### 8. Gaps, Contradictions and Open Questions
+
+A numbered list of everything the database code could not settle. This section is the sole upstream source for the PRD's Open Questions, so a gap you do not record here is lost to every downstream consumer — record it even when it feels minor.
+
+For each entry give:
+- **What is unresolved** — the specific question, in one sentence
+- **Evidence** — the file path(s) and what they do and do not show
+- **Why it matters** — what a rewrite cannot decide without an answer
+
+Include at minimum: contradictions between two sources describing the same thing; concepts referenced but never defined; rules whose trigger conditions or boundaries are unclear; and anything the export, transcript, or mockup set visibly truncates or omits. If you genuinely found none, say so explicitly rather than omitting the section.
+
 ## Output guidance
 
+- **Write each top-level section as `## N. Title`** (h2, matching the numbering in this spec). The CLI checks that every mandatory section is present by counting these headings, so a section written at another level or without its number may be read as missing.
 - **Cite source file paths** in every section so the reader can trace claims back to code.
 - **Be exhaustive** — include all discovered logic, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
+- **Append with `cat >>`, not Edit.** Use Write once to create the file with its metadata block and first section, then append each subsequent section with a single heredoc:
+
+  ```
+  cat >> output/database-analysis.md <<'SECTION'
+  ## 2. Next section
+
+  ...content...
+  SECTION
+  ```
+
+  This is a real append: it needs no `old_string` to match, cannot fail because anchor text drifted, and does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written.
+- **Never leave placeholder text.** Write each section's full content at the point you append it. Do not write markers such as `_(populated below)_`, `TODO`, or `TBD` intending to return to them — a run that ends early leaves them unfilled.
+- **Verify before finishing** — Read the finished file back and confirm every section is present and that it ends with your final section rather than mid-sentence. Append anything missing before reporting completion.
 - Use consistent markdown structure (headings, bullet lists, code citations).
 - Do not speculate. If the source code does not contain enough information to determine a pattern, say so rather than guessing.
 

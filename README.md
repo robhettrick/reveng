@@ -35,16 +35,68 @@ Running on the host directly (no sandbox) is supported but discouraged. When a r
 - `jq` (for parsing Claude output in the `reveng` CLI)
 - For `reveng sandbox` only: Docker and the [`devcontainer` CLI](https://github.com/devcontainers/cli) (`npm install -g @devcontainers/cli`)
 
-### Optional: Mermaid Chart connector
+### Optional: Mermaid validation
 
-The `validate-mermaid` skill (invoked by the `business-analyst`, `interaction-analyst`, and `product-manager` agents to validate Mermaid diagrams in generated outputs) depends on the **Mermaid Chart** connector hosted on claude.ai. To enable it:
+The `validate-mermaid` skill (invoked by the `business-analyst`, `interaction-analyst`, and `product-manager` agents to validate Mermaid diagrams in generated outputs) needs one of two validators.
+
+**mermaid-cli (recommended)** — works headlessly and needs no authentication, so it is the validator that works when `reveng` runs non-interactively with an `ANTHROPIC_API_KEY`:
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+The `reveng sandbox` image ships this preinstalled, along with the `chromium` it renders through, so no setup is needed inside the container.
+
+**Mermaid Chart connector** — an alternative for sessions signed in to claude.ai:
 
 1. Sign in at [claude.ai](https://claude.ai)
 2. Open **Settings → Connectors**
 3. Enable **Mermaid Chart**
 4. Restart Claude Code so it picks up the new MCP server
 
-Without this connector the skill exits cleanly with a notice — the rest of the pipeline still runs, but mermaid diagrams in generated outputs are not auto-validated. Note that this is an account-level setting and is not currently available for Claude Code users who are not signed in to claude.ai.
+This is an account-level setting, and the connector is reachable only from claude.ai-authenticated sessions — it is **not** available when running on an API key, which is `reveng`'s default headless mode.
+
+With neither validator available the skill exits cleanly with a notice — the rest of the pipeline still runs, but mermaid diagrams in generated outputs are not auto-validated.
+
+### Optional: run cost tracking
+
+Every Claude invocation appends a row to `~/.config/reveng/metrics.jsonl` (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
+
+Each run gets an id of the form `<command>-<model>-<timestamp>` (e.g. `synth-fable-20260821-142233`). Pass `--run-id` to set a stable label when comparing runs:
+
+```bash
+reveng synth --run-id synth-fable-baseline -m fable
+reveng synth --run-id synth-opus-baseline  -m opus
+```
+
+View the dashboard (no install needed):
+
+```bash
+uv run --with streamlit --with plotly --with pandas \
+  streamlit run scripts/metrics-dashboard.py
+```
+
+It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
+
+**Recording controls.** Each row includes the workspace directory name, which identifies the engagement, so the log is written `0600` and is capped in size:
+
+| Variable | Effect |
+|----------|--------|
+| `REVENG_METRICS=off` | Disable recording entirely |
+| `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
+| `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics.jsonl` |
+
+### `reveng synth` options
+
+`synth` runs each analyst as its own Claude session, reusing any analysis file that is already present **and complete** — an analysis missing sections its agent is required to produce is regenerated rather than reused. The four analyses are checked again before the PRD is synthesised.
+
+| Flag | Effect |
+|------|--------|
+| `--analyses-only` | Run the analysts and stop before the PRD |
+| `--prd-only` | Skip the analysts and synthesise the PRD from existing analyses |
+| `--force` | Synthesise the PRD even if the analyses look incomplete |
+
+`--analyses-only` and `--prd-only` are mutually exclusive.
 
 ## Installation
 

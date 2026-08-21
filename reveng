@@ -29,6 +29,8 @@ Global options (for commands that invoke Claude):
   -m, --model MODEL   Claude model to use (default varies by command)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
+  --run-id ID          Label this run in the metrics log (default:
+                       <command>-<model>-<timestamp>)
   -h, --help           Show help for a command
 
 Run 'reveng <command> --help' for command-specific usage.
@@ -68,8 +70,11 @@ check_workspace_initialised() {
 }
 
 stream_progress() {
-  jq -r --unbuffered '
+  # -R + fromjson? so a non-JSON line (e.g. a warning on Claude's stderr) is
+  # skipped rather than aborting the progress display mid-run.
+  jq -rR --unbuffered '
     def shorten($n): if length > $n then .[:$n-1] + "…" else . end;
+    fromjson? |
     if .type == "system" and .subtype == "init" then
       "▸ Starting Claude session (model: " + (.model // "?") + ")"
     elif .type == "assistant" then
@@ -96,6 +101,62 @@ stream_progress() {
   ' 2>/dev/null
 }
 
+# Establish the run identity recorded against every metrics row for this run.
+# Format: <command>-<model>-<timestamp>, e.g. synth-fable-20260821-142233.
+# Override with --run-id for a stable label when comparing runs.
+init_run_id() {
+  REVENG_CMD="$1"
+  REVENG_RUN_ID="${RUN_ID:-${1}-${2}-$(date +%Y%m%d-%H%M%S)}"
+  export REVENG_CMD REVENG_RUN_ID
+}
+
+# Append one JSONL row per Claude invocation. The result event carries the
+# authoritative cost for the whole run — every turn and sub-agent already
+# aggregated — so there is no pricing table to maintain here.
+#
+# The workspace name identifies the engagement, and the log otherwise grows
+# without bound in the user's home directory. Two controls:
+#   REVENG_METRICS=off        disable recording entirely
+#   REVENG_METRICS_KEEP=<n>   retain only the newest n rows (default 5000)
+record_run_metrics() {
+  local raw_log="$1" model="$2"
+  [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
+  local out="${REVENG_METRICS_LOG:-${REVENG_CONFIG_DIR:-$HOME/.config/reveng}/metrics.jsonl}"
+  [[ -f "$raw_log" ]] || return 0
+  mkdir -p "$(dirname "$out")" 2>/dev/null || return 0
+
+  jq -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
+        --arg command "${REVENG_CMD:-unknown}" \
+        --arg model "$model" \
+        --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
+        --arg workspace "$(basename "$PWD")" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    fromjson? | select(.type == "result") | {
+      ts: $ts, run_id: $run_id, command: $command, model: $model,
+      phase: $phase, workspace: $workspace,
+      cost_usd: .total_cost_usd, duration_ms: .duration_ms,
+      num_turns: .num_turns, is_error: .is_error,
+      input_tokens: .usage.input_tokens,
+      output_tokens: .usage.output_tokens,
+      cache_read_tokens: .usage.cache_read_input_tokens,
+      cache_write_tokens: .usage.cache_creation_input_tokens
+    }' "$raw_log" >> "$out" 2>/dev/null || true
+  chmod 600 "$out" 2>/dev/null || true
+
+  # Trim to the newest N rows so the log cannot grow without bound.
+  local keep="${REVENG_METRICS_KEEP:-5000}"
+  if [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )); then
+    local n
+    n=$(wc -l < "$out" 2>/dev/null | tr -d ' ') || return 0
+    if [[ "$n" =~ ^[0-9]+$ ]] && (( n > keep )); then
+      local tmp
+      tmp=$(mktemp "${out}.XXXXXX") || return 0
+      tail -n "$keep" "$out" > "$tmp" 2>/dev/null && mv "$tmp" "$out" || rm -f "$tmp"
+      chmod 600 "$out" 2>/dev/null || true
+    fi
+  fi
+}
+
 run_claude() {
   local prompt="$1"
   local model="$2"
@@ -103,6 +164,11 @@ run_claude() {
   local dry_run="${4:-false}"
 
   check_workspace_initialised
+
+  # Analyst runs on a large source tree routinely exceed Claude Code's default
+  # background-task ceiling (600s), which terminates the agent mid-write and
+  # leaves truncated output. 0 waits indefinitely. Respect an explicit override.
+  export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
 
   local cmd=(
     claude -p "$prompt"
@@ -120,16 +186,214 @@ run_claude() {
 
   warn_permissions
 
-  if [[ "$verbose" == "true" ]]; then
-    "${cmd[@]}" 2>&1 | tee /dev/stderr | jq -r 'select(.type == "result") | .result // empty'
+  # Claude's stderr is merged into the JSON stream below, so any warning it
+  # emits becomes a non-JSON line that would abort jq mid-run. Keep the raw
+  # stream so such a line can be identified after the fact.
+  #
+  # The stream contains the full analysis of the target codebase, so the file is
+  # created by mktemp (unpredictable name) and restricted to the owner rather
+  # than left world-readable at a guessable path. One file per invocation, so
+  # phases within a single synth do not overwrite each other. Kept on failure
+  # for diagnosis; removed on success.
+  local raw_log created_raw_log=false
+  if [[ -n "${REVENG_RAW_LOG:-}" ]]; then
+    raw_log="$REVENG_RAW_LOG"
   else
-    "${cmd[@]}" 2>&1 | tee >(stream_progress >&2) | jq -r 'select(.type == "result") | .result // empty'
-    local claude_exit=${PIPESTATUS[0]}
-    if [[ $claude_exit -ne 0 ]]; then
-      echo "Error: Claude exited with status $claude_exit." >&2
+    raw_log=$(mktemp "${TMPDIR:-/tmp}/reveng-raw-XXXXXX.jsonl") || {
+      echo "Error: could not create a temporary file for the output stream." >&2
+      return 1
+    }
+    created_raw_log=true
+  fi
+  chmod 600 "$raw_log" 2>/dev/null || true
+
+  # errexit + pipefail would abort the script at a failing pipeline, skipping the
+  # diagnostics and metrics below on exactly the runs that need them. Suspend it
+  # around the pipeline only; the exit status is handled explicitly afterwards.
+  local -a pipe_status=()
+  set +e
+  if [[ "$verbose" == "true" ]]; then
+    "${cmd[@]}" 2>&1 | tee "$raw_log" /dev/stderr | jq -rR --unbuffered 'fromjson? | select(.type == "result") | .result // empty'
+    pipe_status=("${PIPESTATUS[@]}")
+  else
+    "${cmd[@]}" 2>&1 | tee "$raw_log" >(stream_progress >&2) | jq -rR --unbuffered 'fromjson? | select(.type == "result") | .result // empty'
+    pipe_status=("${PIPESTATUS[@]}")
+  fi
+  set -e
+
+  local claude_exit="${pipe_status[0]:-0}"
+
+  record_run_metrics "$raw_log" "$model"
+
+  # Report any line that was not valid JSON, whether or not the run failed. If
+  # any were seen the log is worth keeping even on success, so the path printed
+  # here still resolves.
+  local saw_non_json=false
+  if grep -qvE '^\{' "$raw_log" 2>/dev/null; then
+    saw_non_json=true
+    echo "Note: non-JSON lines in Claude's output stream (raw log: $raw_log):" >&2
+    grep -nvE '^\{' "$raw_log" 2>/dev/null | grep -v '^[0-9]*:$' | head -5 >&2
+  fi
+
+  if [[ $claude_exit -ne 0 ]]; then
+    echo "Error: Claude exited with status $claude_exit." >&2
+    echo "Raw stream for this phase kept at: $raw_log" >&2
+    return 1
+  fi
+
+  # Clean run: the stream held the full analysis of the target codebase, so do
+  # not leave it lying around. Only remove what this function created, and only
+  # when nothing above pointed the user at it.
+  if [[ "$created_raw_log" == "true" && "$saw_non_json" == "false" ]]; then
+    rm -f "$raw_log"
+  fi
+}
+
+# Single source of truth for the analyst pipeline: which agent writes which
+# file, in run order. ANALYSIS_FILES is derived from it so the two can never
+# drift apart.
+# agent | output file | number of mandatory top-level sections the agent's
+# AGENT.md declares. The section count is the deterministic completeness signal:
+# a run cut short silently omits trailing sections, which no tail-of-file
+# heuristic can detect. Keep these in step with each agent's
+# "All N top-level sections are mandatory" line.
+ANALYSIS_AGENTS=(
+  "business-analyst|output/domain-analysis.md|7"
+  "interaction-analyst|output/interaction-analysis.md|5"
+  "application-developer|output/application-analysis.md|10"
+  "database-analyst|output/database-analysis.md|8"
+)
+
+ANALYSIS_FILES=()
+ANALYSIS_SECTIONS=()
+for _entry in "${ANALYSIS_AGENTS[@]}"; do
+  IFS='|' read -r _ _file _sections <<<"$_entry"
+  ANALYSIS_FILES+=("$_file")
+  ANALYSIS_SECTIONS+=("$_sections")
+done
+unset _entry _file _sections
+
+# Check one analysis file for the signatures of a run that was cut short.
+# Echoes a problem description and returns 1, or returns 0 if the file looks sound.
+check_analysis_complete() {
+  local file="$1" expected_sections="${2:-}"
+
+  if [[ ! -f "$file" ]]; then
+    echo "missing"
+    return 1
+  fi
+
+  local lines
+  lines=$(wc -l < "$file" | tr -d ' ')
+  if [[ "$lines" -lt 50 ]]; then
+    echo "implausibly short ($lines lines)"
+    return 1
+  fi
+
+  # Match only the deferral markers the agents actually emit, and only when they
+  # are the whole line. A bare "TBD" anywhere in the file is normal in legacy
+  # analysis — a status column value, an old source comment, a quoted transcript
+  # — and flagging it would block the pipeline on legitimate content. Fenced
+  # code blocks are excluded outright for the same reason.
+  local placeholders
+  placeholders=$(awk '
+    /^[[:space:]]*```/ { fence = !fence; next }
+    fence { next }
+    /^[[:space:]]*[_*]*\((populated|to be) [^)]*\)[_*]*[[:space:]]*$/ { n++ ; next }
+    /^[[:space:]]*(TODO|TBD)[[:space:]]*:?[[:space:]]*$/ { n++ }
+    END { print n + 0 }
+  ' "$file" 2>/dev/null || echo 0)
+  if [[ "${placeholders:-0}" -gt 0 ]]; then
+    echo "$placeholders unfilled placeholder line(s) — agent deferred content it never wrote"
+    return 1
+  fi
+
+  # The reliable signal that a run was cut short: trailing sections are simply
+  # absent. Compare the numbered sections present against the count the agent is
+  # required to produce. No tail-of-file heuristic can see this — a file
+  # truncated after section 6 of 10 ends on a perfectly ordinary line.
+  #
+  # Counts top-level numbered sections: "## 3. Title". The trailing space after
+  # the dot is what excludes sub-numbering ("## 3.1", "### 3.1.2"), which would
+  # otherwise inflate the count and mask a short run. If nothing matches at h2
+  # the same shape is tried at h3, so an agent that renders one level deeper is
+  # still counted rather than silently passing with zero.
+  #
+  # No "|| echo 0" on the grep: grep -c already prints 0 and exits 1 when
+  # nothing matches, so the fallback would append a second line, yielding
+  # $'0\n0' — which fails a numeric test and silently skips the check.
+  if [[ -n "$expected_sections" ]]; then
+    local found
+    # "|| true" is required, not cosmetic: grep -c exits 1 when the count is
+    # zero, and a bare assignment adopts that status — under errexit the script
+    # would die here with no message. The count is still printed, so this does
+    # not reintroduce the $'0\n0' problem that "|| echo 0" caused.
+    found=$(grep -cE '^##[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
+    if (( found == 0 )); then
+      found=$(grep -cE '^###[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
+    fi
+    if (( found < expected_sections )); then
+      echo "only $found of $expected_sections sections present — run stopped early"
       return 1
     fi
   fi
+
+  return 0
+}
+
+# Warn if ANALYSIS_SECTIONS has drifted from the "All N top-level sections are
+# mandatory" line in each AGENT.md. Nothing enforces the two stay in step, so
+# surface a mismatch rather than silently checking against a stale number.
+check_section_counts_in_sync() {
+  local dir="${1:-.claude/agents}" entry agent file expected declared
+  [[ -d "$dir" ]] || return 0
+  for entry in "${ANALYSIS_AGENTS[@]}"; do
+    IFS='|' read -r agent file expected <<<"$entry"
+    [[ -f "$dir/$agent/AGENT.md" ]] || continue
+    declared=$(grep -oE 'All [0-9]+ top-level sections are mandatory' "$dir/$agent/AGENT.md" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$declared" && "$declared" != "$expected" ]]; then
+      echo "Warning: $dir/$agent/AGENT.md declares $declared mandatory sections," >&2
+      echo "         but reveng expects $expected. Either the workspace copy of the" >&2
+      echo "         agent is stale (re-run 'reveng init' to refresh it — existing" >&2
+      echo "         files are skipped, so delete it first), or ANALYSIS_AGENTS in" >&2
+      echo "         the reveng script needs updating to match the shipped agent." >&2
+    fi
+  done
+}
+
+# Gate between the analysis phase and PRD synthesis.
+validate_analyses() {
+  check_section_counts_in_sync
+  local strict="${1:-true}"
+  local -a problems=()
+
+  local i detail
+  for i in "${!ANALYSIS_FILES[@]}"; do
+    if ! detail=$(check_analysis_complete "${ANALYSIS_FILES[$i]}" "${ANALYSIS_SECTIONS[$i]}"); then
+      problems+=("${ANALYSIS_FILES[$i]}: $detail")
+    fi
+  done
+
+  if [[ ${#problems[@]} -eq 0 ]]; then
+    echo "All four analyses look complete."
+    return 0
+  fi
+
+  echo "Error: analysis files look incomplete:" >&2
+  local p
+  for p in "${problems[@]}"; do
+    echo "  - $p" >&2
+  done
+  echo >&2
+  echo "A likely cause is an agent being terminated before it finished writing." >&2
+  echo "Delete the affected file(s) and re-run 'reveng synth' to regenerate them," >&2
+  echo "or pass --force to synthesise the PRD from what is there." >&2
+
+  if [[ "$strict" == "true" ]]; then
+    return 1
+  fi
+  echo "Continuing anyway (--force)." >&2
+  return 0
 }
 
 validate_inputs() {
@@ -190,14 +454,35 @@ validate_inputs() {
 
 # ── Parse common flags ──────────────────────────────────────────────────────
 
+# flag_allowed <flag> [allowed ...] — is <flag> in the caller's allow-list?
+flag_allowed() {
+  local needle="$1"; shift
+  local f
+  for f in "$@"; do [[ "$f" == "$needle" ]] && return 0; done
+  return 1
+}
+
+# parse_flags <default_model> [allowed_extra_flag ...] -- "$@"
+# Command-specific flags must be declared by the command that accepts them, so
+# that e.g. `reveng curate --prd-only` is rejected rather than silently ignored.
 parse_flags() {
   local default_model="$1"
   shift
+  # Allowed extra flags are passed first and terminated by "--", so they are
+  # never confused with the caller's own arguments.
+  local -a allowed=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    allowed+=("$1"); shift
+  done
+  [[ "${1:-}" == "--" ]] && shift
 
   MODEL="$default_model"
   VERBOSE="false"
   DRY_RUN="false"
   SHOW_HELP="false"
+  SYNTH_ANALYSES_ONLY="false"
+  SYNTH_PRD_ONLY="false"
+  SYNTH_FORCE="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -216,6 +501,38 @@ parse_flags() {
       --dry-run)
         DRY_RUN="true"
         shift
+        ;;
+      --analyses-only)
+        if ! flag_allowed "--analyses-only" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --analyses-only is not valid for this command." >&2
+          return 1
+        fi
+        SYNTH_ANALYSES_ONLY="true"
+        shift
+        ;;
+      --prd-only)
+        if ! flag_allowed "--prd-only" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --prd-only is not valid for this command." >&2
+          return 1
+        fi
+        SYNTH_PRD_ONLY="true"
+        shift
+        ;;
+      --force)
+        if ! flag_allowed "--force" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --force is not valid for this command." >&2
+          return 1
+        fi
+        SYNTH_FORCE="true"
+        shift
+        ;;
+      --run-id)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --run-id requires an argument." >&2
+          return 1
+        fi
+        RUN_ID="$2"
+        shift 2
         ;;
       -h|--help)
         SHOW_HELP="true"
@@ -325,7 +642,7 @@ EOF
 }
 
 cmd_curate() {
-  parse_flags "$CURATE_DEFAULT_MODEL" "$@"
+  parse_flags "$CURATE_DEFAULT_MODEL" -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -338,12 +655,14 @@ Options:
   -m, --model MODEL   Claude model to use (default: opus)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
+  --run-id ID          Label this run in the metrics log
   -h, --help           Show this help message
 EOF
     return 0
   fi
 
   validate_inputs curate
+  init_run_id "curate" "$MODEL"
   run_claude \
     "Run the \`digital-content-curator\` agent to prepare all the screenshots and transcripts for analysis." \
     "$MODEL" \
@@ -352,7 +671,7 @@ EOF
 }
 
 cmd_synth() {
-  parse_flags "$SYNTH_DEFAULT_MODEL" "$@"
+  parse_flags "$SYNTH_DEFAULT_MODEL" --analyses-only --prd-only --force -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -361,25 +680,103 @@ Usage: reveng synth [options]
 Runs the four analysis agents and synthesises results into a Product
 Requirements Document using the product-manager agent.
 
+Each analyst runs as its own Claude session, so each gets a full context
+rather than a share of one. Existing analysis files are reused; analysts run
+only for missing outputs. Analyses are checked for completeness before the
+PRD is synthesised.
+
 Options:
   -m, --model MODEL   Claude model to use (default: opus)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
+  --analyses-only      Run the analysts and stop before the PRD
+  --prd-only           Skip the analysts and synthesise the PRD only
+  --force              Synthesise the PRD even if analyses look incomplete
+  --run-id ID          Label this run in the metrics log
   -h, --help           Show this help message
 EOF
     return 0
   fi
 
+  if [[ "$SYNTH_ANALYSES_ONLY" == "true" && "$SYNTH_PRD_ONLY" == "true" ]]; then
+    echo "Error: --analyses-only and --prd-only are mutually exclusive." >&2
+    return 1
+  fi
+
   validate_inputs synth
+  init_run_id "synth" "$MODEL"
+
+  if [[ "$SYNTH_PRD_ONLY" != "true" ]]; then
+    check_section_counts_in_sync
+    cmd_synth_analyses || return 1
+  fi
+
+  if [[ "$SYNTH_ANALYSES_ONLY" == "true" ]]; then
+    echo "Analyses complete. Run 'reveng synth --prd-only' to produce the PRD."
+    return 0
+  fi
+
+  # Gate: never synthesise a PRD from truncated analyses without being asked to.
+  if [[ "$DRY_RUN" != "true" ]]; then
+    validate_analyses "$([[ "$SYNTH_FORCE" == "true" ]] && echo false || echo true)" || return 1
+  fi
+
+  echo "▸ Synthesising PRD"
+  REVENG_PHASE="/synth/prd"
   run_claude \
-    "Run the \`product-manager\` agent to analyse the application and produce the PRD." \
+    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them." \
     "$MODEL" \
     "$VERBOSE" \
     "$DRY_RUN"
 }
 
+# Run each analyst as its own top-level Claude session, skipping those whose
+# output already exists. Sequential rather than parallel: these are large,
+# long-running jobs and each needs a full context to itself.
+cmd_synth_analyses() {
+  local -a pending=()
+  local agent out
+
+  # Reuse only what is actually usable. Validating here rather than after the
+  # fact closes the loop: an incomplete analysis is regenerated automatically
+  # instead of being reused and then reported as a blocking error the user has
+  # to resolve by deleting the file themselves.
+  local detail entry sections
+  for entry in "${ANALYSIS_AGENTS[@]}"; do
+    IFS='|' read -r agent out sections <<<"$entry"
+    if [[ -f "$out" ]]; then
+      if detail=$(check_analysis_complete "$out" "$sections"); then
+        echo "▸ Reusing existing $out"
+        continue
+      fi
+      echo "▸ Regenerating $out ($detail)"
+    fi
+    pending+=("$agent|$out")
+  done
+
+  if [[ ${#pending[@]} -eq 0 ]]; then
+    echo "All four analyses already present."
+    return 0
+  fi
+
+  for entry in "${pending[@]}"; do
+    agent="${entry%%|*}"
+    out="${entry##*|}"
+    echo "▸ Running $agent → $out"
+    REVENG_PHASE="/synth/analysis/$agent"
+    if ! run_claude \
+      "Run the \`$agent\` agent. Write its complete analysis to $out." \
+      "$MODEL" \
+      "$VERBOSE" \
+      "$DRY_RUN"; then
+      echo "Error: $agent failed. $out may be missing or incomplete." >&2
+      return 1
+    fi
+  done
+}
+
 cmd_decompose() {
-  parse_flags "$DECOMPOSE_DEFAULT_MODEL" "$@"
+  parse_flags "$DECOMPOSE_DEFAULT_MODEL" -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -392,12 +789,14 @@ Options:
   -m, --model MODEL   Claude model to use (default: opus)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
+  --run-id ID          Label this run in the metrics log
   -h, --help           Show this help message
 EOF
     return 0
   fi
 
   validate_inputs decompose
+  init_run_id "decompose" "$MODEL"
   run_claude \
     "Run the \`prd-to-features\` agent to decompose the PRD into individual feature specifications." \
     "$MODEL" \

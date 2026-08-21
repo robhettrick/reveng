@@ -45,7 +45,6 @@ Read the entire PRD, then use `ultrathink` to deeply analyse its contents. Befor
 - **Key User Interfaces & Screens** (Section 4) — screens that form a cohesive workflow
 - **Workflows** (Section 6) — end-to-end journeys that deliver distinct user value
 - **Business Rules** (Section 5) — rules that cluster around specific capabilities
-- **Open Questions** (Section 13) — read the full text of every open question and note which feature areas each one bears on. You will paste the bearing questions into each feature-writer prompt in Step 6, so capture the wording, not just the position in the list.
 
 Group related PRD content into features using these principles:
 - Each feature should be **self-contained and independently deliverable** where possible
@@ -131,11 +130,6 @@ Each `feature-writer` agent must receive a fully self-contained prompt. Construc
 **Feature-specific PRD content:**
 Paste the verbatim text of every PRD section relevant to this feature — bounded context definition, relevant screens, relevant workflows, relevant business rules, relevant entities and attributes, relevant legacy pain points. Do not summarise. Extract and paste the actual PRD text.
 
-**Relevant PRD open questions:**
-Paste the full text of every PRD open question that bears on this feature — the question, its context, and its impact. The feature-writer must restate these as local rows in its own Open Questions section, so it needs the wording, not the identifier. A worker given only "Open Question 20" will emit an unresolvable pointer into a file whose reader has no PRD.
-
-If no PRD open question bears on this feature, include the section with the single word "None" — do not omit the heading, as the worker is told to expect it.
-
 **Shared PRD context:**
 Paste the following from the PRD verbatim, for every agent — this ensures clean feature boundaries:
 - Full actors/personas table
@@ -144,8 +138,6 @@ Paste the following from the PRD verbatim, for every agent — this ensures clea
 
 **Template and authoring rules:**
 Paste the entire **Feature template and authoring rules** section from the end of this agent definition verbatim into the prompt. Do not summarise, abridge, or omit any part — including the wireframe rules and the full markdown template. This is what the feature-writer follows to produce the file; without it inlined in the prompt, the worker has nothing reliable to follow.
-
-Authoring rule 6 (the standalone rule) is the only place the worker is told which references its reader can resolve. Omit or abridge it and the feature file will defer to a PRD its implementer does not have.
 
 ### Step 7: Report results
 
@@ -168,26 +160,18 @@ The content below is what you paste verbatim into every feature-writer prompt un
 3. Write for the new system implementation — describe what the re-engineered application should do, not what the legacy system does. Use the legacy system as a reference for like-for-like functionality, but frame everything as forward-looking.
 4. Adopt the ubiquitous language of the domain. Use terminology from the PRD consistently.
 5. Each feature should be self-contained and deliverable independently where possible.
-6. **The feature file must be buildable on its own.** The implementer will have your file, the sibling `FT-XXX` feature files, and the workspace — but **not the PRD**. The test for any reference is whether the thing being pointed at travels with the spec:
-    - **Referring to sibling feature files is legitimate and expected.** The other `FT-XXX` specs sit alongside yours, dependencies between features are real, and they must be visible. Likewise, files in the workspace — reference-data files, exports, and similar artefacts — may be cited by their workspace-relative path, e.g. `reference-data/SAM-ref-data.csv`.
-    - **Never defer meaning to the PRD.** Phrases such as "as described in the PRD", "the PRD states", "see PRD Section 4.25", or "(PRD Open Question 16)" are only acceptable when the substance being referred to is already written out in full at that point in your file.
-    - Where a business rule, entity attribute, workflow step, validation, or open question comes from the PRD, restate it in full — the trigger, the condition, the outcome, and the error or message text — then cite the PRD identifier after it as provenance. `(PRD BR-095)` following a complete restatement of the rule is correct and encouraged; `(PRD BR-095)` in place of the rule is not.
-    - Apply the same restate-then-attribute habit to permitted references. "Reference data owned by FT-001" or "delivered by FT-006" is good — it says what the thing is, then attributes ownership. Do not make a sibling spec or an external file carry meaning alone: state the rule your feature enforces, then attribute it, rather than sending the reader elsewhere to find it. Where you cite a data file, describe the columns, codes, or fields you rely on.
-    - Inherited open questions must be restated as local questions. If the PRD content supplied raises an unresolved question that affects this feature, write the question, its context, and its impact out in your own Open Questions table. Do not emit a bare pointer such as "(PRD Open Question 20)" — the reader cannot resolve it.
-    - Justify the feature's priority from evidence you can state locally. Where the PRD rates the relevant bounded context **Core**, **Supporting** or **Peripheral**, restate the *grounds* for that rating — how centrally the capability figures in the primary workflows, how consistently it appears across the source analyses, the user value it carries, and its position in the dependency graph. A bare "PRD criticality: Core" is not a justification, because the reader cannot see the PRD. Never invent a basis the supplied content does not evidence — no appeal to statute, regulation or policy unless the PRD content says so.
-    - Test before you finish: read the file as someone who has the sibling specs and the workspace files but has never seen the PRD. Any sentence they could not act on is incomplete.
-7. User stories must follow the format: "As a [role], I want to [action], so that [benefit]" with acceptance criteria in Given/When/Then format.
-8. The UI/Layout section must be verbose enough that a designer or developer could infer a mockup from the text alone. For core workflows, describe every field, label, position, and interaction state. For secondary workflows, describe logical groupings (panels, tabs, forms) with field lists.
-9. Acceptance criteria must be written per story in Given/When/Then (Gherkin) format.
-10. Exclude performance or security testing from acceptance criteria.
-11. Surface any legacy pain points, bugs, workarounds, or frustrations from the supplied PRD content as improvement opportunities in the Legacy Pain Points section.
-12. Use the Feature ID supplied — do not assign a new one.
-13. Assign user story IDs sequentially starting from the first US-XXX number supplied in your prompt. Story IDs must be globally sequential across all features — use exactly the starting number given.
-14. Use MoSCoW prioritisation (Must, Should, Could, Won't) for the feature and for individual stories.
-15. Estimate effort in person-days for a single developer.
-16. Increment the Open Questions count in the metadata whenever you add a question to the Open Questions section.
-17. Populate Upstream Features and Downstream Features from the dependency IDs supplied in your prompt.
-18. Each user story must include ASCII wireframes between the story statement and the acceptance criteria:
+6. User stories must follow the format: "As a [role], I want to [action], so that [benefit]" with acceptance criteria in Given/When/Then format.
+7. The UI/Layout section must be verbose enough that a designer or developer could infer a mockup from the text alone. For core workflows, describe every field, label, position, and interaction state. For secondary workflows, describe logical groupings (panels, tabs, forms) with field lists.
+8. Acceptance criteria must be written per story in Given/When/Then (Gherkin) format.
+9. Exclude performance or security testing from acceptance criteria.
+10. Surface any legacy pain points, bugs, workarounds, or frustrations from the supplied PRD content as improvement opportunities in the Legacy Pain Points section.
+11. Use the Feature ID supplied — do not assign a new one.
+12. Assign user story IDs sequentially starting from the first US-XXX number supplied in your prompt. Story IDs must be globally sequential across all features — use exactly the starting number given.
+13. Use MoSCoW prioritisation (Must, Should, Could, Won't) for the feature and for individual stories.
+14. Estimate effort in person-days for a single developer.
+15. Increment the Open Questions count in the metadata whenever you add a question to the Open Questions section.
+16. Populate Upstream Features and Downstream Features from the dependency IDs supplied in your prompt.
+17. Each user story must include ASCII wireframes between the story statement and the acceptance criteria:
     - Produce one wireframe per distinct screen or view the story touches.
     - For the **first story** in the feature, show the full page context (header, navigation, main content area, footer). For **subsequent stories**, show only the feature area affected.
     - Use Unicode box-drawing characters for structure: `┌ ┐ └ ┘ ─ │ ├ ┤ ┬ ┴ ┼`
@@ -213,9 +197,9 @@ The content below is what you paste verbatim into every feature-writer prompt un
 | **Downstream Features** | FT-YYY, FT-ZZZ                                                                                                                 |
 | **Feature Name**        | *Repeat the feature title*                                                                                                     |
 | **Owner**               | *Identify the most appropriate team or role from the PRD actors*                                                               |
-| **Priority**            | *Assign MoSCoW priority: Must / Should / Could / Won't — justify from evidence stated here: how centrally the capability figures in the primary workflows, how consistently the supplied content evidences it, the user value it carries, its dependency position. Do not cite a PRD criticality rating in place of the grounds for it, and do not invent a basis the supplied content does not evidence* |
+| **Priority**            | *Assign MoSCoW priority: Must / Should / Could / Won't — justify based on the PRD criticality of the relevant bounded context* |
 | **Last Updated**        | *Insert today's date in YYYY-MM-DD format*                                                                                     |
-| **Source Reference**    | *Provenance only — cite the PRD section(s) this feature derives from, e.g. "Section 4.2 — Search Repository Workflow". Nothing in this file may depend on the reader following this reference* |
+| **PRD Reference**       | *Cite the specific PRD section(s) this feature derives from, e.g. "Section 4.2 — Search Repository Workflow"*                  |
 | **Open Questions**      | *Count of unresolved questions listed in the Open Questions section below*                                                     |
 
 ---
@@ -348,13 +332,13 @@ Scenario: *Additional scenario covering edge case or alternative path*
 | ------- | ---------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- |
 | BR-001  | *Describe the business rule in plain language* | *Which field, entity, or workflow this applies to* | *What happens when the rule is violated — error message, prevention, warning* |
 
-*Include rules derived from the PRD content supplied around data integrity, referential constraints, conditional logic, and domain-specific validation. State each rule in full here — its trigger, condition, outcome and any error or message text — so the table is actionable without the PRD. Cite the originating PRD rule identifier after the rule text as provenance, never in place of it.*
+*Include rules derived from the PRD around data integrity, referential constraints, conditional logic, and domain-specific validation.*
 
 ## 10. Data Model and Requirements
 
 ### Entities
 
-*List the key entities involved in this feature and their attributes. Draw these from the PRD domain model supplied in your prompt, but write the attributes out in full here — never refer the reader to the PRD domain model, which they do not have. Every attribute this feature reads or writes must be named in the table below.*
+*List the key entities involved in this feature and their attributes. Reference the PRD domain model.*
 
 | Entity | Key Attributes | Description |
 |--------|---------------|-------------|
@@ -446,7 +430,7 @@ Scenario: *Additional scenario covering edge case or alternative path*
 
 | # | Question | Context | Impact | Raised By | Status |
 |---|----------|---------|--------|-----------|--------|
-| 1 | *The specific question, stated in full and answerable as written* | *Why this question arose — state the missing or conflicting evidence itself (what is absent, what disagrees with what). Do not write only a pointer such as "PRD Open Question 20" or "see Section 15"; a section citation may follow the explanation as provenance* | *What is blocked or at risk until answered* | *Agent / Team / Stakeholder* | *Open / Answered* |
+| 1 | *The specific question* | *Why this question arose — reference the relevant section* | *What is blocked or at risk until answered* | *Agent / Team / Stakeholder* | *Open / Answered* |
 
 **Update the Open Questions count in the Metadata table whenever questions are added or resolved.**
 
@@ -467,7 +451,7 @@ This feature is considered done when all of the following are satisfied:
 
 ## 21. Glossary
 
-*Define terms specific to this feature that may not be obvious to all team members. Include every domain term this file uses that its reader could not otherwise resolve, including terms drawn from the PRD glossary — the implementer has no PRD to consult. Restricting this table to terms this feature introduces would leave the core domain vocabulary undefined for a reader who has no PRD.*
+*Define terms specific to this feature that may not be obvious to all team members. Only include terms introduced or redefined within the scope of this feature.*
 
 | Term | Definition |
 |------|-----------|

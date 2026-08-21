@@ -4,7 +4,7 @@ description: >
   Interaction analysis specialist for legacy application screens and user workflows.
   Use this agent to stitch HTML mockups with curated interview transcripts
   into a comprehensive interaction analysis for downstream PRD generation.
-tools: Read, Write, Glob, Skill, Bash(mkdir*)
+tools: Read, Write, Edit, Glob, Skill, Bash(mkdir*), Bash(cat >> output/*)
 skills:
   - validate-mermaid
 memory: project
@@ -101,7 +101,7 @@ Begin the output file with a metadata block listing every input file that was re
 -->
 ```
 
-Structure the file with the four sections below. **All four top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No user workflows could be identified from the available transcripts.").
+Structure the file with the 5 sections below. **All 5 top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No user workflows could be identified from the available transcripts.").
 
 ### 1. Screen Inventory
 
@@ -164,10 +164,35 @@ Mapping of which transcripts discuss which screens. Flag:
 - Screens with no transcript coverage
 - Transcript mentions with no matching HTML mockup
 
+### 5. Gaps, Contradictions and Open Questions
+
+A numbered list of everything the transcripts and HTML mockups could not settle. This section is the sole upstream source for the PRD's Open Questions, so a gap you do not record here is lost to every downstream consumer — record it even when it feels minor.
+
+For each entry give:
+- **What is unresolved** — the specific question, in one sentence
+- **Evidence** — the file path(s) and what they do and do not show
+- **Why it matters** — what a rewrite cannot decide without an answer
+
+Include at minimum: contradictions between two sources describing the same thing; concepts referenced but never defined; rules whose trigger conditions or boundaries are unclear; and anything the export, transcript, or mockup set visibly truncates or omits. If you genuinely found none, say so explicitly rather than omitting the section.
+
 ## Output guidance
 
+- **Write each top-level section as `## N. Title`** (h2, matching the numbering in this spec). The CLI checks that every mandatory section is present by counting these headings, so a section written at another level or without its number may be read as missing.
 - **Cite file paths** (`output/html/` and `output/transcripts/` paths) in every section so the reader can trace claims back to source material.
 - **Be exhaustive** — include all discovered content, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
+- **Append with `cat >>`, not Edit.** Use Write once to create the file with its metadata block and first section, then append each subsequent section with a single heredoc:
+
+  ```
+  cat >> output/interaction-analysis.md <<'SECTION'
+  ## 2. Next section
+
+  ...content...
+  SECTION
+  ```
+
+  This is a real append: it needs no `old_string` to match, cannot fail because anchor text drifted, and does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written.
+- **Never leave placeholder text.** Write each section's full content at the point you append it. Do not write markers such as `_(populated below)_`, `TODO`, or `TBD` intending to return to them — a run that ends early leaves them unfilled.
+- **Verify before finishing** — Read the finished file back and confirm every section is present, no placeholders remain, and the file ends with a complete sentence rather than mid-word. Append anything missing before reporting completion.
 - Include mermaid flowcharts for every identified workflow.
 - Use consistent markdown structure (headings, bullet lists, file path citations).
 - Do not speculate. If the material does not contain enough information to determine a pattern, say so rather than guessing.
