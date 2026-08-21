@@ -5,7 +5,7 @@ description: >
   Product Requirements Document. Requires the four analysis files to exist
   before running — the reveng CLI runs the analyst agents as separate steps.
   This agent synthesises only; it launches no analysts.
-tools: Read, Write, Edit, Glob, Skill, Bash(cat >> output/*)
+tools: Read, Write, Edit, Glob, Skill, Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 skills:
   - validate-mermaid
 memory: project

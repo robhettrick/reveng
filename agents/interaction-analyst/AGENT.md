@@ -4,7 +4,7 @@ description: >
   Interaction analysis specialist for legacy application screens and user workflows.
   Use this agent to stitch HTML mockups with curated interview transcripts
   into a comprehensive interaction analysis for downstream PRD generation.
-tools: Read, Write, Edit, Glob, Skill, Bash(mkdir*), Bash(cat >> output/*)
+tools: Read, Write, Edit, Glob, Skill, Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 skills:
   - validate-mermaid
 memory: project
@@ -180,7 +180,7 @@ Include at minimum: contradictions between two sources describing the same thing
 - **Write each top-level section as `## N. Title`** (h2, matching the numbering in this spec). The CLI checks that every mandatory section is present by counting these headings, so a section written at another level or without its number may be read as missing.
 - **Cite file paths** (`output/html/` and `output/transcripts/` paths) in every section so the reader can trace claims back to source material.
 - **Be exhaustive** — include all discovered content, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
-- **Append with `cat >>`, not Edit.** Use Write once to create the file with its metadata block and first section, then append each subsequent section with a single heredoc:
+- **Append with `cat >>`, not Edit.** Create the file with the **Write** tool (metadata block plus the first section), then append every subsequent section with a single heredoc. Use Write for creation rather than `cat >`, so only appends go through Bash:
 
   ```
   cat >> output/interaction-analysis.md <<'REVENG_SECTION_EOF'
