@@ -94,6 +94,8 @@ The complete PRD is far too large to emit in a single response. Attempting it pr
    REVENG_SECTION_EOF
    ```
 
+   Write the path exactly as shown — relative, `output/PRD.md` — not an absolute path. The CLI always runs from the workspace root, so the relative form is correct in every environment.
+
    Appending this way needs no `old_string` to match, so it cannot fail because anchor text drifted, and it does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written. Split any single section that is itself large across several appends — one subsection at a time — rather than compressing it to fit one call. Sections 3 (Domain Model), 6 (Workflows), and 9 (Behaviour) will normally each need several appends of their own.
 
 **Incremental writing exists to remove the length limit, not to summarise.** Each section must be as detailed as the source analyses support — the same depth you would produce if that section were the only thing you had to write. Never trade a section's completeness for brevity because there are more sections to come: there is no budget to conserve, and a section that reads as a summary of the analyses has failed. In particular, produce one Given/When/Then scenario for *every* distinct behaviour the analyses describe, and one `####` subsection for *every* named entity, bounded context, screen, and workflow they identify — do not sample, merge, or select representatives.

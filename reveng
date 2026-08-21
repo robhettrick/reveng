@@ -129,7 +129,7 @@ record_run_metrics() {
         --arg command "${REVENG_CMD:-unknown}" \
         --arg model "$model" \
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
-        --arg workspace "$(basename "$PWD")" \
+        --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     fromjson? | select(.type == "result") | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
@@ -980,6 +980,11 @@ EOF
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     remote_env+=("--remote-env" "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
   fi
+
+  # Inside the container the workspace always mounts at /workspace, so
+  # basename "$PWD" would label every engagement "workspace" in the metrics
+  # log. Carry the host folder name through so rows stay attributable.
+  remote_env+=("--remote-env" "REVENG_WORKSPACE=$(basename "$PWD")")
 
   # ── Build devcontainer up command ────────────────────────────────────────
 

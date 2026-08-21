@@ -217,6 +217,8 @@ Include at minimum: contradictions between two sources describing the same thing
   REVENG_SECTION_EOF
   ```
 
+  Write the path exactly as shown — relative, `output/domain-analysis.md` — not an absolute path. The CLI always runs from the workspace root, so the relative form is correct in every environment; an absolute path differs between a container run and a host run and will not match the permitted command.
+
   This is a real append: it needs no `old_string` to match, cannot fail because anchor text drifted, and does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written.
 - **Never leave placeholder text.** Write each section's full content at the point you append it. Do not write markers such as `_(populated below)_`, `TODO`, or `TBD` intending to return to them — a run that ends early leaves them unfilled.
 - **Verify before finishing** — Read the finished file back and confirm every section is present, no placeholders remain, and the file ends with a complete sentence rather than mid-word. Append anything missing before reporting completion.

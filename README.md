@@ -79,7 +79,7 @@ uv run --with streamlit --with plotly --with pandas \
 
 It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
 
-**Recording controls.** Each row includes the workspace directory name, which identifies the engagement, so the log is written `0600` and is capped in size:
+**Recording controls.** Each row includes the workspace directory name, which identifies the engagement, so the log is written `0600` and is capped in size. In the sandbox the host folder name is carried in via `REVENG_WORKSPACE` (the workspace itself always mounts at `/workspace`), and `~/.config/reveng` is bind-mounted so rows written inside the container land on the host and survive `--rebuild`:
 
 | Variable | Effect |
 |----------|--------|
