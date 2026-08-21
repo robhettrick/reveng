@@ -125,6 +125,16 @@ record_run_metrics() {
   [[ -f "$raw_log" ]] || return 0
   mkdir -p "$(dirname "$out")" 2>/dev/null || return 0
 
+  # Every write below is deliberately silent so telemetry can never fail a run.
+  # That means an unwritable target — a root-owned bind source, or a host uid
+  # that does not match the container's node user — would produce an empty
+  # dashboard with no clue why. Probe once and say so on stderr.
+  if ! { : >> "$out"; } 2>/dev/null; then
+    echo "Note: cannot write metrics to $out — run metrics will not be recorded." >&2
+    echo "      Check the directory is writable by the current user." >&2
+    return 0
+  fi
+
   jq -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
         --arg model "$model" \
@@ -929,6 +939,14 @@ EOF
 
   # ── Build mounts ─────────────────────────────────────────────────────────
 
+  # devcontainer.json bind-mounts $CONFIG_DIR so metrics written inside the
+  # container land on the host. If the source does not exist Docker creates it
+  # as a root-owned directory that the container's node user cannot write to —
+  # and every failure path in record_run_metrics is deliberately silent, so the
+  # symptom would be an empty dashboard with no error anywhere. Create it here,
+  # owned by the invoking user, so that case cannot arise.
+  mkdir -p "$CONFIG_DIR" 2>/dev/null || true
+
   local mounts=()
 
   # reveng binary
@@ -938,8 +956,12 @@ EOF
     mounts+=("--mount" "type=bind,source=$reveng_bin,target=/usr/local/bin/reveng")
   fi
 
-  # Note: ~/.claude is mounted via devcontainer.json (not here) to avoid duplicate mounts.
-  # Reveng's agents and skills travel with the workspace via .claude/ so no plugin mount is needed.
+  # Note: ~/.claude and ~/.config/reveng are mounted via devcontainer.json (not
+  # here) to avoid duplicate mounts. Agents and skills still travel with the
+  # workspace via .claude/, so nothing reads the mounted plugin/ directory during
+  # curate/synth/decompose — but because $CONFIG_DIR is mounted whole (for
+  # metrics), plugin/ is visible inside the container, which means `reveng init`
+  # now works there too.
 
   # SSH keys (optional)
   if [[ -d "$HOME/.ssh" ]]; then

@@ -86,6 +86,11 @@ It plots cost per run, mean cost by command and model, cost per 1k output tokens
 | `REVENG_METRICS=off` | Disable recording entirely |
 | `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
 | `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics.jsonl` |
+| `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
+
+**If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng` by path, so sandbox rows would be written somewhere the host cannot see. Set `REVENG_METRICS_LOG` to a path under the workspace (which *is* mounted) — for example `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl` — or edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout.
+
+The mount covers the whole config directory, not just the metrics file, so the host `plugin/` directory is also visible inside the sandbox. Nothing in `curate`/`synth`/`decompose` reads it — agents and skills travel with the workspace under `.claude/` — but it does mean `reveng init` works inside the container as well as on the host.
 
 ### `reveng synth` options
 
