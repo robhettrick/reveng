@@ -33,18 +33,78 @@ Running on the host directly (no sandbox) is supported but discouraged. When a r
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - Bash 4+
 - `jq` (for parsing Claude output in the `reveng` CLI)
+- For the metrics dashboard only: [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - For `reveng sandbox` only: Docker and the [`devcontainer` CLI](https://github.com/devcontainers/cli) (`npm install -g @devcontainers/cli`)
 
-### Optional: Mermaid Chart connector
+### Optional: Mermaid validation
 
-The `validate-mermaid` skill (invoked by the `business-analyst`, `interaction-analyst`, and `product-manager` agents to validate Mermaid diagrams in generated outputs) depends on the **Mermaid Chart** connector hosted on claude.ai. To enable it:
+The `validate-mermaid` skill (invoked by the `business-analyst`, `interaction-analyst`, and `product-manager` agents to validate Mermaid diagrams in generated outputs) needs one of two validators.
+
+**mermaid-cli (recommended)** — works headlessly and needs no authentication, so it is the validator that works when `reveng` runs non-interactively with an `ANTHROPIC_API_KEY`:
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+The `reveng sandbox` image ships this preinstalled, along with the `chromium` it renders through, so no setup is needed inside the container.
+
+**Mermaid Chart connector** — an alternative for sessions signed in to claude.ai:
 
 1. Sign in at [claude.ai](https://claude.ai)
 2. Open **Settings → Connectors**
 3. Enable **Mermaid Chart**
 4. Restart Claude Code so it picks up the new MCP server
 
-Without this connector the skill exits cleanly with a notice — the rest of the pipeline still runs, but mermaid diagrams in generated outputs are not auto-validated. Note that this is an account-level setting and is not currently available for Claude Code users who are not signed in to claude.ai.
+This is an account-level setting, and the connector is reachable only from claude.ai-authenticated sessions — it is **not** available when running on an API key, which is `reveng`'s default headless mode.
+
+With neither validator available the skill exits cleanly with a notice — the rest of the pipeline still runs, but mermaid diagrams in generated outputs are not auto-validated.
+
+### Optional: run cost tracking
+
+Every Claude invocation appends a row to `~/.config/reveng/metrics.jsonl` (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
+
+Each run gets an id of the form `<command>-<model>-<timestamp>` (e.g. `synth-fable-20260821-142233`). Pass `--run-id` to set a stable label when comparing runs:
+
+```bash
+reveng synth --run-id synth-fable-baseline -m fable
+reveng synth --run-id synth-opus-baseline  -m opus
+```
+
+View the dashboard (no install needed):
+
+```bash
+uv run --with streamlit --with plotly --with pandas \
+  streamlit run ~/.config/reveng/scripts/metrics-dashboard.py
+```
+
+(`install.sh` copies it there; from a git checkout, `scripts/metrics-dashboard.py` works too.)
+
+It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
+
+**Recording controls.** Each row includes the workspace directory name, which identifies the engagement, so the log is written `0600` and is capped in size. In the sandbox the host folder name is carried in via `REVENG_WORKSPACE` (the workspace itself always mounts at `/workspace`), and `~/.config/reveng` is bind-mounted so rows written inside the container land on the host and survive `--rebuild`:
+
+| Variable | Effect |
+|----------|--------|
+| `REVENG_METRICS=off` | Disable recording entirely |
+| `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
+| `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics.jsonl` |
+| `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
+
+**If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng` by path, so sandbox rows would be written somewhere the host cannot see. Either edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout, or set `REVENG_METRICS_LOG` to a path under the workspace, which *is* mounted — e.g. `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl`. If you take the second option, add that file to the workspace `.gitignore`: engagement workspaces are usually git repositories, and the log carries per-run cost and token counts for client work.
+
+The mount covers the whole config directory, not just the metrics file, so the host `plugin/` directory is also visible inside the sandbox. Nothing in `curate`/`synth`/`decompose` reads it — agents and skills travel with the workspace under `.claude/` — but it does mean `reveng init` works inside the container as well as on the host.
+
+### `reveng synth` options
+
+`synth` runs each analyst as its own Claude session, reusing any analysis file that is already present **and complete** — an analysis missing sections its agent is required to produce is regenerated rather than reused. The four analyses are checked again before the PRD is synthesised.
+
+| Flag | Effect |
+|------|--------|
+| `--analyses-only` | Run the analysts and stop before the PRD |
+| `--prd-only` | Skip the analysts and synthesise the PRD from existing analyses |
+| `--force` | Skip every completeness check: reuse existing analyses without validating them, and synthesise the PRD even if they look incomplete. Use it when the checks are wrong about your files — note it also disables the placeholder and minimum-length checks |
+
+`--analyses-only` and `--prd-only` are mutually exclusive.
 
 ## Installation
 
@@ -72,6 +132,16 @@ Override the destinations with the `REVENG_BIN_DIR` and `REVENG_CONFIG_DIR` envi
 ```bash
 ./install.sh --update
 ```
+
+**Upgrading an existing workspace.** `reveng init` skips files that already exist, so a workspace initialised against an earlier release keeps its old `.claude/agents/`. Those agents may declare a different set of mandatory sections than the CLI expects, which makes every analysis look incomplete and regenerates all four at full cost. After `./install.sh --update`, refresh the workspace copies:
+
+```bash
+cd my-legacy-app
+rm -rf .claude/agents .claude/skills
+reveng init
+```
+
+`reveng synth` warns if it detects this mismatch, naming the agent and both counts.
 
 After installation, verify with:
 

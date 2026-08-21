@@ -5,7 +5,7 @@ description: >
   and adapts to it. Use this agent to extract workflows, behaviours, domain
   model, and business logic from source code under src/ for downstream PRD
   generation.
-tools: Read, Write, Glob, Grep, Bash(mkdir*)
+tools: Read, Write, Edit, Glob, Grep, Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 memory: project
 ---
 
@@ -113,7 +113,7 @@ Begin the output file with a metadata block listing every input file that was re
 -->
 ```
 
-Structure the file with the nine sections below. **All nine top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No integration points could be identified from the source code.").
+Structure the file with the 10 sections below. **All 10 top-level sections are mandatory** — always include every section in every run. If a section has no relevant content, include it with a brief note explaining why (e.g. "No integration points could be identified from the source code.").
 
 ### 1. Application Overview
 
@@ -229,9 +229,36 @@ Includes stored procedures, functions, packages, and any other named server-side
 
 **Do not include:** SQL query internals, routine bodies, database schema, or data-access implementation details — these are the responsibility of the database-analyst agent.
 
+### 10. Gaps, Contradictions and Open Questions
+
+A numbered list of everything the source code could not settle. This section is the sole upstream source for the PRD's Open Questions, so a gap you do not record here is lost to every downstream consumer — record it even when it feels minor.
+
+For each entry give:
+- **What is unresolved** — the specific question, in one sentence
+- **Evidence** — the file path(s) and what they do and do not show
+- **Why it matters** — what a rewrite cannot decide without an answer
+
+Include at minimum: contradictions between two sources describing the same thing; concepts referenced but never defined; rules whose trigger conditions or boundaries are unclear; and anything the export, transcript, or mockup set visibly truncates or omits. If you genuinely found none, say so explicitly rather than omitting the section.
+
 ## Output guidance
 
+- **Write each top-level section as `## N. Title`** (h2, matching the numbering in this spec). The CLI checks that every mandatory section is present by counting these headings, so a section written at another level or without its number may be read as missing.
 - **Cite source file paths** in every section so the reader can trace claims back to code.
 - **Be exhaustive** — include all discovered logic, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
+- **Append with `cat >>`, not Edit.** Create the file with the **Write** tool (metadata block plus the first section), then append every subsequent section with a single heredoc. Use Write for creation rather than `cat >`, so only appends go through Bash:
+
+  ```
+  cat >> output/application-analysis.md <<'REVENG_SECTION_EOF'
+  ## 2. Next section
+
+  ...content...
+  REVENG_SECTION_EOF
+  ```
+
+  Write the path exactly as shown — relative, `output/application-analysis.md` — not an absolute path. The CLI always runs from the workspace root, so the relative form is correct in every environment. An absolute path differs between a container run and a host run, so while the sandbox's `/workspace/output/...` form is also permitted as a safety net, the relative path is the one to write.
+
+  This is a real append: it needs no `old_string` to match, cannot fail because anchor text drifted, and does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written.
+- **Never leave placeholder text.** Write each section's full content at the point you append it. Do not write markers such as `_(populated below)_`, `TODO`, or `TBD` intending to return to them — a run that ends early leaves them unfilled.
+- **Verify before finishing** — Read the finished file back and confirm every section is present and that it ends with your final section rather than mid-sentence. Append anything missing before reporting completion.
 - Use consistent markdown structure (headings, bullet lists, code citations).
 - Do not speculate. If the source code does not contain enough information to determine a pattern, say so rather than guessing.
