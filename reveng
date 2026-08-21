@@ -118,20 +118,32 @@ init_run_id() {
 # without bound in the user's home directory. Two controls:
 #   REVENG_METRICS=off        disable recording entirely
 #   REVENG_METRICS_KEEP=<n>   retain only the newest n rows (default 5000)
+# A synth makes several Claude calls, so an unwritable target would otherwise
+# repeat this warning once per call. Say it once per process.
+REVENG_METRICS_WARNED=false
+metrics_unwritable_note() {
+  [[ "$REVENG_METRICS_WARNED" == "true" ]] && return 0
+  REVENG_METRICS_WARNED=true
+  echo "Note: cannot write metrics to $1 — run metrics will not be recorded." >&2
+  echo "      Check the directory exists and is writable by the current user." >&2
+}
+
 record_run_metrics() {
   local raw_log="$1" model="$2"
   [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
   local out="${REVENG_METRICS_LOG:-${REVENG_CONFIG_DIR:-$HOME/.config/reveng}/metrics.jsonl}"
   [[ -f "$raw_log" ]] || return 0
-  mkdir -p "$(dirname "$out")" 2>/dev/null || return 0
+  if ! mkdir -p "$(dirname "$out")" 2>/dev/null; then
+    metrics_unwritable_note "$out"
+    return 0
+  fi
 
   # Every write below is deliberately silent so telemetry can never fail a run.
   # That means an unwritable target — a root-owned bind source, or a host uid
   # that does not match the container's node user — would produce an empty
-  # dashboard with no clue why. Probe once and say so on stderr.
+  # dashboard with no clue why. Probe, and report once per process.
   if ! { : >> "$out"; } 2>/dev/null; then
-    echo "Note: cannot write metrics to $out — run metrics will not be recorded." >&2
-    echo "      Check the directory is writable by the current user." >&2
+    metrics_unwritable_note "$out"
     return 0
   fi
 
@@ -720,7 +732,7 @@ Options:
   --dry-run            Print what would be executed without running
   --analyses-only      Run the analysts and stop before the PRD
   --prd-only           Skip the analysts and synthesise the PRD only
-  --force              Synthesise the PRD even if analyses look incomplete
+  --force              Skip all completeness checks (reuse and PRD gate)
   --run-id ID          Label this run in the metrics log
   -h, --help           Show this help message
 EOF

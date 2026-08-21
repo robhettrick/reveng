@@ -88,7 +88,7 @@ It plots cost per run, mean cost by command and model, cost per 1k output tokens
 | `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics.jsonl` |
 | `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
 
-**If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng` by path, so sandbox rows would be written somewhere the host cannot see. Set `REVENG_METRICS_LOG` to a path under the workspace (which *is* mounted) — for example `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl` — or edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout.
+**If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng` by path, so sandbox rows would be written somewhere the host cannot see. Either edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout, or set `REVENG_METRICS_LOG` to a path under the workspace, which *is* mounted — e.g. `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl`. If you take the second option, add that file to the workspace `.gitignore`: engagement workspaces are usually git repositories, and the log carries per-run cost and token counts for client work.
 
 The mount covers the whole config directory, not just the metrics file, so the host `plugin/` directory is also visible inside the sandbox. Nothing in `curate`/`synth`/`decompose` reads it — agents and skills travel with the workspace under `.claude/` — but it does mean `reveng init` works inside the container as well as on the host.
 
@@ -100,7 +100,7 @@ The mount covers the whole config directory, not just the metrics file, so the h
 |------|--------|
 | `--analyses-only` | Run the analysts and stop before the PRD |
 | `--prd-only` | Skip the analysts and synthesise the PRD from existing analyses |
-| `--force` | Synthesise the PRD even if the analyses look incomplete |
+| `--force` | Skip every completeness check: reuse existing analyses without validating them, and synthesise the PRD even if they look incomplete. Use it when the checks are wrong about your files — note it also disables the placeholder and minimum-length checks |
 
 `--analyses-only` and `--prd-only` are mutually exclusive.
 
