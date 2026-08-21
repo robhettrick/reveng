@@ -269,11 +269,11 @@ Include at minimum: contradictions between two sources describing the same thing
 - **Append with `cat >>`, not Edit.** Use Write once to create the file with its metadata block and first section, then append each subsequent section with a single heredoc:
 
   ```
-  cat >> output/database-analysis.md <<'SECTION'
+  cat >> output/database-analysis.md <<'REVENG_SECTION_EOF'
   ## 2. Next section
 
   ...content...
-  SECTION
+  REVENG_SECTION_EOF
   ```
 
   This is a real append: it needs no `old_string` to match, cannot fail because anchor text drifted, and does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written.

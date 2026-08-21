@@ -33,6 +33,7 @@ Running on the host directly (no sandbox) is supported but discouraged. When a r
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - Bash 4+
 - `jq` (for parsing Claude output in the `reveng` CLI)
+- For the metrics dashboard only: [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - For `reveng sandbox` only: Docker and the [`devcontainer` CLI](https://github.com/devcontainers/cli) (`npm install -g @devcontainers/cli`)
 
 ### Optional: Mermaid validation

@@ -74,7 +74,7 @@ stream_progress() {
   # skipped rather than aborting the progress display mid-run.
   jq -rR --unbuffered '
     def shorten($n): if length > $n then .[:$n-1] + "…" else . end;
-    fromjson? |
+    fromjson? | objects |
     if .type == "system" and .subtype == "init" then
       "▸ Starting Claude session (model: " + (.model // "?") + ")"
     elif .type == "assistant" then
@@ -106,7 +106,7 @@ stream_progress() {
 # Override with --run-id for a stable label when comparing runs.
 init_run_id() {
   REVENG_CMD="$1"
-  REVENG_RUN_ID="${RUN_ID:-${1}-${2}-$(date +%Y%m%d-%H%M%S)}"
+  REVENG_RUN_ID="${RUN_ID_OVERRIDE:-${1}-${2}-$(date +%Y%m%d-%H%M%S)}"
   export REVENG_CMD REVENG_RUN_ID
 }
 
@@ -167,8 +167,15 @@ run_claude() {
 
   # Analyst runs on a large source tree routinely exceed Claude Code's default
   # background-task ceiling (600s), which terminates the agent mid-write and
-  # leaves truncated output. 0 waits indefinitely. Respect an explicit override.
-  export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
+  # leaves truncated output.
+  #
+  # Claude Code documents 0 as "wait indefinitely", but a wedged agent would then
+  # hang the run with no diagnostic, and if a future build reads 0 as "do not
+  # wait" the failure is silent and identical to the bug this works around. Three
+  # hours is well clear of the longest observed analyst run while still providing
+  # a floor. Override with any value, including 0, if you want the documented
+  # unbounded behaviour.
+  export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-10800000}"
 
   local cmd=(
     claude -p "$prompt"
@@ -213,10 +220,10 @@ run_claude() {
   local -a pipe_status=()
   set +e
   if [[ "$verbose" == "true" ]]; then
-    "${cmd[@]}" 2>&1 | tee "$raw_log" /dev/stderr | jq -rR --unbuffered 'fromjson? | select(.type == "result") | .result // empty'
+    "${cmd[@]}" 2>&1 | tee "$raw_log" /dev/stderr | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
     pipe_status=("${PIPESTATUS[@]}")
   else
-    "${cmd[@]}" 2>&1 | tee "$raw_log" >(stream_progress >&2) | jq -rR --unbuffered 'fromjson? | select(.type == "result") | .result // empty'
+    "${cmd[@]}" 2>&1 | tee "$raw_log" >(stream_progress >&2) | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
     pipe_status=("${PIPESTATUS[@]}")
   fi
   set -e
@@ -228,11 +235,15 @@ run_claude() {
   # Report any line that was not valid JSON, whether or not the run failed. If
   # any were seen the log is worth keeping even on success, so the path printed
   # here still resolves.
-  local saw_non_json=false
-  if grep -qvE '^\{' "$raw_log" 2>/dev/null; then
+  # Detection and reporting must use the same filter. A blank line is not worth
+  # reporting, and treating it as non-JSON would print an empty notice and then
+  # permanently retain a file holding the full analysis of the target codebase.
+  local saw_non_json=false non_json
+  non_json=$(grep -nvE '^[[:space:]]*(\{|$)' "$raw_log" 2>/dev/null | head -5) || true
+  if [[ -n "$non_json" ]]; then
     saw_non_json=true
     echo "Note: non-JSON lines in Claude's output stream (raw log: $raw_log):" >&2
-    grep -nvE '^\{' "$raw_log" 2>/dev/null | grep -v '^[0-9]*:$' | head -5 >&2
+    printf '%s\n' "$non_json" >&2
   fi
 
   if [[ $claude_exit -ne 0 ]]; then
@@ -331,6 +342,13 @@ check_analysis_complete() {
     found=$(grep -cE '^##[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
     if (( found == 0 )); then
       found=$(grep -cE '^###[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
+    fi
+    # Last resort: an agent that wrote "## Section Name" without the number is
+    # not truncated, it just numbered nothing. Counting bare h2 headings avoids
+    # condemning a complete file to a full regeneration on a formatting
+    # difference — the expensive failure mode. Sub-headings are still excluded.
+    if (( found == 0 )); then
+      found=$(grep -cE '^##[[:space:]]+[^#[:space:]]' "$file" 2>/dev/null) || true
     fi
     if (( found < expected_sections )); then
       echo "only $found of $expected_sections sections present — run stopped early"
@@ -480,6 +498,7 @@ parse_flags() {
   VERBOSE="false"
   DRY_RUN="false"
   SHOW_HELP="false"
+  RUN_ID_OVERRIDE=""
   SYNTH_ANALYSES_ONLY="false"
   SYNTH_PRD_ONLY="false"
   SYNTH_FORCE="false"
@@ -531,7 +550,7 @@ parse_flags() {
           echo "Error: --run-id requires an argument." >&2
           return 1
         fi
-        RUN_ID="$2"
+        RUN_ID_OVERRIDE="$2"
         shift 2
         ;;
       -h|--help)
@@ -712,6 +731,11 @@ EOF
   fi
 
   if [[ "$SYNTH_ANALYSES_ONLY" == "true" ]]; then
+    # Validate before claiming completion, otherwise this can report success
+    # over files that the very next `synth --prd-only` will reject.
+    if [[ "$DRY_RUN" != "true" ]]; then
+      validate_analyses "$([[ "$SYNTH_FORCE" == "true" ]] && echo false || echo true)" || return 1
+    fi
     echo "Analyses complete. Run 'reveng synth --prd-only' to produce the PRD."
     return 0
   fi
@@ -741,10 +765,19 @@ cmd_synth_analyses() {
   # fact closes the loop: an incomplete analysis is regenerated automatically
   # instead of being reused and then reported as a blocking error the user has
   # to resolve by deleting the file themselves.
+  #
+  # --force reaches this decision too. Without it, a workspace whose agent files
+  # predate a section-count change would regenerate every analysis on every
+  # invocation — the most expensive runs in the tool — with no way to opt out,
+  # because --force only reached the PRD gate.
   local detail entry sections
   for entry in "${ANALYSIS_AGENTS[@]}"; do
     IFS='|' read -r agent out sections <<<"$entry"
     if [[ -f "$out" ]]; then
+      if [[ "${SYNTH_FORCE:-false}" == "true" ]]; then
+        echo "▸ Reusing existing $out (--force: not checked)"
+        continue
+      fi
       if detail=$(check_analysis_complete "$out" "$sections"); then
         echo "▸ Reusing existing $out"
         continue
@@ -763,6 +796,13 @@ cmd_synth_analyses() {
     agent="${entry%%|*}"
     out="${entry##*|}"
     echo "▸ Running $agent → $out"
+    # Clear any stale file first. The agents Write once and then append, so an
+    # agent that finds a truncated file already on disk can resume appending to
+    # it, producing a merged document that then passes the section count and
+    # reaches the PRD step. Skipped on a dry run, which must not touch outputs.
+    if [[ "$DRY_RUN" != "true" ]]; then
+      rm -f "$out"
+    fi
     REVENG_PHASE="/synth/analysis/$agent"
     if ! run_claude \
       "Run the \`$agent\` agent. Write its complete analysis to $out." \

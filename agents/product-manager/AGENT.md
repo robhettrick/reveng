@@ -67,13 +67,13 @@ Attempt to Read all four analysis files:
 
 All four analysis files must exist before proceeding. If any are missing, stop and report to the user which files are absent and which agents failed.
 
-### Step 4: Validate analysis quality
+### Step 4: Note anything the analyses leave unresolved
 
-For each analysis file, check that it:
-- Contains expected top-level markdown headings
-- Has non-trivial content (more than 20 lines)
-
-If any file appears truncated or malformed, log a warning in the PRD's Open Questions section but proceed.
+The reveng CLI has already checked each analysis for completeness before invoking
+you — it blocks rather than warns, so do not re-implement that check here with
+weaker semantics. What it cannot judge is content: as you read, note any gap,
+contradiction or thin section and record it in the PRD's Open Questions, drawing
+on each analysis's own "Gaps, Contradictions and Open Questions" section.
 
 ### Step 5: Read, cross-reference, and write PRD
 
@@ -87,11 +87,11 @@ The complete PRD is far too large to emit in a single response. Attempting it pr
 2. **Append** section 2 with a heredoc, then section 3, and so on — **one append per section**, to the end of the document:
 
    ```
-   cat >> output/PRD.md <<'SECTION'
+   cat >> output/PRD.md <<'REVENG_SECTION_EOF'
    ## 2. Actors
 
    ...content...
-   SECTION
+   REVENG_SECTION_EOF
    ```
 
    Appending this way needs no `old_string` to match, so it cannot fail because anchor text drifted, and it does not spend output tokens re-emitting text already in the file. Reserve Edit for correcting content you have already written. Split any single section that is itself large across several appends — one subsection at a time — rather than compressing it to fit one call. Sections 3 (Domain Model), 6 (Workflows), and 9 (Behaviour) will normally each need several appends of their own.
