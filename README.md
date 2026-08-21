@@ -74,8 +74,10 @@ View the dashboard (no install needed):
 
 ```bash
 uv run --with streamlit --with plotly --with pandas \
-  streamlit run scripts/metrics-dashboard.py
+  streamlit run ~/.config/reveng/scripts/metrics-dashboard.py
 ```
+
+(`install.sh` copies it there; from a git checkout, `scripts/metrics-dashboard.py` works too.)
 
 It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
 
@@ -130,6 +132,16 @@ Override the destinations with the `REVENG_BIN_DIR` and `REVENG_CONFIG_DIR` envi
 ```bash
 ./install.sh --update
 ```
+
+**Upgrading an existing workspace.** `reveng init` skips files that already exist, so a workspace initialised against an earlier release keeps its old `.claude/agents/`. Those agents may declare a different set of mandatory sections than the CLI expects, which makes every analysis look incomplete and regenerates all four at full cost. After `./install.sh --update`, refresh the workspace copies:
+
+```bash
+cd my-legacy-app
+rm -rf .claude/agents .claude/skills
+reveng init
+```
+
+`reveng synth` warns if it detects this mismatch, naming the agent and both counts.
 
 After installation, verify with:
 

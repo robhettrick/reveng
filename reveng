@@ -131,7 +131,7 @@ metrics_unwritable_note() {
 record_run_metrics() {
   local raw_log="$1" model="$2"
   [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
-  local out="${REVENG_METRICS_LOG:-${REVENG_CONFIG_DIR:-$HOME/.config/reveng}/metrics.jsonl}"
+  local out="${REVENG_METRICS_LOG:-$CONFIG_DIR/metrics.jsonl}"
   [[ -f "$raw_log" ]] || return 0
   if ! mkdir -p "$(dirname "$out")" 2>/dev/null; then
     metrics_unwritable_note "$out"
@@ -153,7 +153,7 @@ record_run_metrics() {
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-    fromjson? | select(.type == "result") | {
+    fromjson? | objects | select(.type == "result") | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
       cost_usd: .total_cost_usd, duration_ms: .duration_ms,
@@ -224,9 +224,20 @@ run_claude() {
   # than left world-readable at a guessable path. One file per invocation, so
   # phases within a single synth do not overwrite each other. Kept on failure
   # for diagnosis; removed on success.
+  # Retained logs hold the full stream-json for a run — i.e. the complete
+  # analysis of the client's source. Reap anything older than a week so a kept
+  # log is a short-lived diagnostic rather than an indefinite copy.
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'reveng-raw-*.jsonl' -type f -mtime +7 -delete 2>/dev/null || true
+
   local raw_log created_raw_log=false
   if [[ -n "${REVENG_RAW_LOG:-}" ]]; then
-    raw_log="$REVENG_RAW_LOG"
+    # Suffix by phase: a synth runs several Claude calls and tee truncates, so a
+    # single path would leave only the last phase's stream.
+    if [[ -n "${REVENG_PHASE:-}" ]]; then
+      raw_log="${REVENG_RAW_LOG%.jsonl}-$(printf '%s' "${REVENG_PHASE#/}" | tr '/' '-').jsonl"
+    else
+      raw_log="$REVENG_RAW_LOG"
+    fi
   else
     raw_log=$(mktemp "${TMPDIR:-/tmp}/reveng-raw-XXXXXX.jsonl") || {
       echo "Error: could not create a temporary file for the output stream." >&2
@@ -271,6 +282,7 @@ run_claude() {
   if [[ $claude_exit -ne 0 ]]; then
     echo "Error: Claude exited with status $claude_exit." >&2
     echo "Raw stream for this phase kept at: $raw_log" >&2
+    echo "      It contains the full analysis of this codebase — delete it when done." >&2
     return 1
   fi
 
@@ -365,13 +377,10 @@ check_analysis_complete() {
     if (( found == 0 )); then
       found=$(grep -cE '^###[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
     fi
-    # Last resort: an agent that wrote "## Section Name" without the number is
-    # not truncated, it just numbered nothing. Counting bare h2 headings avoids
-    # condemning a complete file to a full regeneration on a formatting
-    # difference — the expensive failure mode. Sub-headings are still excluded.
-    if (( found == 0 )); then
-      found=$(grep -cE '^##[[:space:]]+[^#[:space:]]' "$file" 2>/dev/null) || true
-    fi
+    # Deliberately no bare-heading fallback. Counting "## Anything" would also
+    # count a "## Metadata" block or similar, letting a file one section short
+    # pass. The specs now pin "## N. Title", so an unnumbered file is a spec
+    # violation worth surfacing rather than papering over.
     if (( found < expected_sections )); then
       echo "only $found of $expected_sections sections present — run stopped early"
       return 1
@@ -390,7 +399,13 @@ check_section_counts_in_sync() {
   for entry in "${ANALYSIS_AGENTS[@]}"; do
     IFS='|' read -r agent file expected <<<"$entry"
     [[ -f "$dir/$agent/AGENT.md" ]] || continue
-    declared=$(grep -oE 'All [0-9]+ top-level sections are mandatory' "$dir/$agent/AGENT.md" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    # Older agents spell the count out ("All nine top-level sections are
+    # mandatory"), so a digits-only pattern would find nothing, leave $declared
+    # empty, and skip the warning in exactly the upgrade case this exists for.
+    declared=$(grep -ohE 'All [a-z0-9]+ top-level sections are mandatory' "$dir/$agent/AGENT.md" 2>/dev/null | head -1 \
+      | awk '{print $2}' \
+      | sed 's/^one$/1/;s/^two$/2/;s/^three$/3/;s/^four$/4/;s/^five$/5/;s/^six$/6/;s/^seven$/7/;s/^eight$/8/;s/^nine$/9/;s/^ten$/10/;s/^eleven$/11/;s/^twelve$/12/')
+    [[ "$declared" =~ ^[0-9]+$ ]] || declared=""
     if [[ -n "$declared" && "$declared" != "$expected" ]]; then
       echo "Warning: $dir/$agent/AGENT.md declares $declared mandatory sections," >&2
       echo "         but reveng expects $expected. Either the workspace copy of the" >&2
@@ -401,9 +416,10 @@ check_section_counts_in_sync() {
   done
 }
 
-# Gate between the analysis phase and PRD synthesis.
+# Gate between the analysis phase and PRD synthesis. Callers run
+# check_section_counts_in_sync themselves — doing it here too would warn twice
+# on the path that runs both.
 validate_analyses() {
-  check_section_counts_in_sync
   local strict="${1:-true}"
   local -a problems=()
 
@@ -747,8 +763,9 @@ EOF
   validate_inputs synth
   init_run_id "synth" "$MODEL"
 
+  check_section_counts_in_sync
+
   if [[ "$SYNTH_PRD_ONLY" != "true" ]]; then
-    check_section_counts_in_sync
     cmd_synth_analyses || return 1
   fi
 
@@ -822,8 +839,14 @@ cmd_synth_analyses() {
     # agent that finds a truncated file already on disk can resume appending to
     # it, producing a merged document that then passes the section count and
     # reaches the PRD step. Skipped on a dry run, which must not touch outputs.
-    if [[ "$DRY_RUN" != "true" ]]; then
-      rm -f "$out"
+    # Move the stale file aside rather than deleting it: the agents Write once
+    # then append, so a leftover file would be resumed and merged. But a failed
+    # or interrupted run must not destroy an analysis that cost real money —
+    # keep it as .prev and only discard once the new one is in place.
+    local prev=""
+    if [[ "$DRY_RUN" != "true" && -f "$out" ]]; then
+      prev="$out.prev"
+      mv -f "$out" "$prev" 2>/dev/null || prev=""
     fi
     REVENG_PHASE="/synth/analysis/$agent"
     if ! run_claude \
@@ -831,9 +854,15 @@ cmd_synth_analyses() {
       "$MODEL" \
       "$VERBOSE" \
       "$DRY_RUN"; then
-      echo "Error: $agent failed. $out may be missing or incomplete." >&2
+      if [[ -n "$prev" && -f "$prev" ]]; then
+        mv -f "$prev" "$out" 2>/dev/null || true
+        echo "Error: $agent failed. Restored the previous $out." >&2
+      else
+        echo "Error: $agent failed. $out may be missing or incomplete." >&2
+      fi
       return 1
     fi
+    [[ -n "$prev" ]] && rm -f "$prev"
   done
 }
 
