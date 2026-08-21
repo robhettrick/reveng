@@ -377,10 +377,18 @@ check_analysis_complete() {
     if (( found == 0 )); then
       found=$(grep -cE '^###[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
     fi
-    # Deliberately no bare-heading fallback. Counting "## Anything" would also
-    # count a "## Metadata" block or similar, letting a file one section short
-    # pass. The specs now pin "## N. Title", so an unnumbered file is a spec
-    # violation worth surfacing rather than papering over.
+    # Last tier: an agent that wrote "## Title" without the number is not
+    # truncated, it just numbered nothing — condemning that file to a full
+    # regeneration (which would repeat the same formatting) is the expensive
+    # failure. Count bare h2 headings, excluding the handful of non-section
+    # blocks the templates use, so a "## Metadata" table cannot pad the total.
+    if (( found == 0 )); then
+      found=$(grep -cE '^##[[:space:]]+[^#[:space:]]' "$file" 2>/dev/null) || true
+      local non_section
+      non_section=$(grep -ciE '^##[[:space:]]+(metadata|introduction|overview|how to read|contents|table of contents|summary|sources|appendix)' "$file" 2>/dev/null) || true
+      (( found -= non_section ))
+      (( found < 0 )) && found=0
+    fi
     if (( found < expected_sections )); then
       echo "only $found of $expected_sections sections present — run stopped early"
       return 1
@@ -530,7 +538,9 @@ parse_flags() {
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     allowed+=("$1"); shift
   done
-  [[ "${1:-}" == "--" ]] && shift
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
 
   MODEL="$default_model"
   VERBOSE="false"
@@ -823,7 +833,7 @@ cmd_synth_analyses() {
       fi
       echo "▸ Regenerating $out ($detail)"
     fi
-    pending+=("$agent|$out")
+    pending+=("$agent|$out|$sections")
   done
 
   if [[ ${#pending[@]} -eq 0 ]]; then
@@ -832,8 +842,7 @@ cmd_synth_analyses() {
   fi
 
   for entry in "${pending[@]}"; do
-    agent="${entry%%|*}"
-    out="${entry##*|}"
+    IFS='|' read -r agent out sections <<<"$entry"
     echo "▸ Running $agent → $out"
     # Clear any stale file first. The agents Write once and then append, so an
     # agent that finds a truncated file already on disk can resume appending to
@@ -862,8 +871,29 @@ cmd_synth_analyses() {
       fi
       return 1
     fi
-    [[ -n "$prev" ]] && rm -f "$prev"
+    if [[ -n "$prev" ]]; then
+      rm -f "$prev"
+    fi
+
+    # If a file we just regenerated still fails, say so and stop. Deferring to
+    # validate_analyses would let the next invocation regenerate it again on the
+    # same terms — a full analyst pass per run with no way out but --force.
+    if [[ "$DRY_RUN" != "true" ]]; then
+      if ! detail=$(check_analysis_complete "$out" "$sections"); then
+        echo "Error: $agent produced $out but it is still incomplete ($detail)." >&2
+        echo "       Re-running will repeat this. Check the agent's mandatory" >&2
+        echo "       section list against what it wrote, or pass --force to" >&2
+        echo "       proceed with the file as it stands." >&2
+        return 1
+      fi
+    fi
   done
+
+  # Explicit: the function's status must not depend on whatever the last
+  # statement in the loop happens to evaluate to. A trailing `[[ ... ]] && cmd`
+  # that tests false made this return 1 on every fresh workspace — after
+  # running all four analysts — aborting synth before the PRD with no message.
+  return 0
 }
 
 cmd_decompose() {
