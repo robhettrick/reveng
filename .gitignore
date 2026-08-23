@@ -7,3 +7,6 @@ PROMPT_plan.md
 PROMPT_build.md
 .idea/
 /.mcp.json
+
+# Claude PR review pipeline output (findings, filtered review, prompt)
+.claude-review/
