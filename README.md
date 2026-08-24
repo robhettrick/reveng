@@ -61,7 +61,7 @@ With neither validator available the skill exits cleanly with a notice — the r
 
 ### Optional: run cost tracking
 
-Every Claude invocation appends a row to `~/.config/reveng/metrics/metrics.jsonl` (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
+Every Claude invocation appends one row to `.reveng/metrics.jsonl` **in the workspace** (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. The cost record therefore travels with the analysis it justifies. `reveng init` adds `.reveng/` to the workspace `.gitignore`, so committing it is a deliberate act — un-ignore it when you want the spend figures kept as evidence alongside the PRD. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
 
 Each run gets an id of the form `<command>-<model>-<timestamp>` (e.g. `synth-fable-20260821-142233`). Pass `--run-id` to set a stable label when comparing runs:
 
@@ -81,18 +81,19 @@ uv run --with streamlit --with plotly --with pandas \
 
 It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
 
-**Recording controls.** Each row includes the workspace directory name, which identifies the engagement, so the log is written `0600` and is capped in size. In the sandbox the host folder name is carried in via `REVENG_WORKSPACE` (the workspace itself always mounts at `/workspace`), and `~/.config/reveng` is bind-mounted so rows written inside the container land on the host and survive `--rebuild`:
+**Recording controls.** Rows carry no client content — cost, duration, turn count and token counts only — and are capped in size. Because the log lives in the workspace, which always mounts at `/workspace`, rows written inside the sandbox land on the host with no extra bind mount; `reveng sandbox` sets `REVENG_WORKSPACE` from the host folder name so they are still labelled with the engagement rather than `workspace`:
 
 | Variable | Effect |
 |----------|--------|
 | `REVENG_METRICS=off` | Disable recording entirely |
 | `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
-| `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics/metrics.jsonl` |
+| `REVENG_METRICS_LOG=<path>` | Write to one specific file instead of the workspace's `.reveng/metrics.jsonl` — use this to aggregate several engagements into one log |
+| `REVENG_METRICS_DIR=<dir>` | Use a directory other than `.reveng` for the log |
 | `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
 
-**If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng/metrics` by path, so sandbox rows would be written somewhere the host cannot see. Either edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout, or set `REVENG_METRICS_LOG` to a path under the workspace, which *is* mounted — e.g. `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl`. If you take the second option, add that file to the workspace `.gitignore`: engagement workspaces are usually git repositories, and the log carries per-run cost and token counts for client work.
+The dashboard resolves the same order: `REVENG_METRICS_LOG` if set, else the workspace's `.reveng/metrics.jsonl`, else the pre-0.2 location `~/.config/reveng/metrics/metrics.jsonl` so older logs stay viewable. Run it from the workspace and it finds the right file. To compare engagements, point `REVENG_METRICS_LOG` at a combined file — every row carries `workspace`, so the breakdowns still separate cleanly.
 
-Only `~/.config/reveng/metrics` is mounted into the sandbox, not the whole config directory. Mounting all of it would expose the installed `plugin/` agents and skills read-write to a container whose Claude runs with `--dangerously-skip-permissions`, which would let an agent inside the sandbox rewrite agents that later run on the host.
+Nothing from `~/.config/reveng` is mounted into the sandbox. Mounting the config directory would expose the installed `plugin/` agents and skills read-write to a container whose Claude runs with `--dangerously-skip-permissions`, which would let an agent inside the sandbox rewrite agents that later run on the host.
 
 **A call that dies before reporting usage records a row with a null cost**, so failures are visible as a count but their spend is unknown — total spend under-counts runs that crashed or were interrupted.
 
