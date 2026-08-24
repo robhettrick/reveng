@@ -204,7 +204,7 @@ Include at minimum: contradictions between two sources describing the same thing
 
 ## Output guidance
 
-- **Write each top-level section as `## N. Title`** (h2, matching the numbering in this spec). The CLI checks that every mandatory section is present by counting these headings, so a section written at another level or without its number may be read as missing.
+- **Number every top-level section, using the numbers in this spec** — e.g. `## 3. Subdomains`. The headings below are shown at `###` because they are nested inside this document; in your output file they are top-level, so write them at `##`. What matters is that the number is present and the numbering is unbroken: the CLI confirms every mandatory section exists by counting numbered headings, and an unnumbered or missing one may be read as a truncated run.
 - **Cite transcript file paths** in every section so the reader can trace claims back to source material.
 - **Be exhaustive** — include all discovered domain knowledge, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
 - **Append with `cat >>`, not Edit.** Create the file with the **Write** tool (metadata block plus the first section), then append every subsequent section with a single heredoc. Use Write for creation rather than `cat >`, so only appends go through Bash:

@@ -454,17 +454,15 @@ check_analysis_complete() {
     found=$(awk '
       /^[[:space:]]*```/ { fence = !fence; next }
       fence { next }
-      /^##[[:space:]]+[0-9]+\.[[:space:]]/  { h2n++; next }
-      /^###[[:space:]]+[0-9]+\.[[:space:]]/ { h3n++; next }
+      # Numbered sections count at either level. Choosing one tier over the
+      # other under-counts a file that splits levels — a complete 7-section
+      # analysis with one h2 and six h3 headings scored 1, and was rejected.
+      /^#{2,3}[[:space:]]+[0-9]+\.[[:space:]]/ { numbered++; next }
       /^##[[:space:]]+[^#[:space:]]/ {
         if (tolower($0) ~ /^##[[:space:]]+(metadata|introduction|overview|how to read|contents|table of contents|summary|sources|appendix)/) next
-        h2b++
+        bare++
       }
-      END {
-        if (h2n > 0)      print h2n
-        else if (h3n > 0) print h3n
-        else              print h2b + 0
-      }
+      END { print (numbered > 0 ? numbered : bare + 0) }
     ' "$file" 2>/dev/null) || found=0
     : "${found:=0}"
     if (( found < expected_sections )); then

@@ -1,7 +1,7 @@
 ---
 name: validate-mermaid
 description: Validates all Mermaid diagram blocks in a markdown file and fixes broken diagrams in place. Uses the local mermaid-cli (mmdc) when available, falling back to the Mermaid Chart MCP tool.
-allowed-tools: Read, Edit, Bash(mmdc*), Bash(command -v*), Bash(mktemp*), mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram
+allowed-tools: Read, Write, Edit, Bash(mmdc*), Bash(command -v*), mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram
 ---
 
 You validate every Mermaid diagram block in a markdown file. For each broken diagram you attempt to fix it in place, retrying up to 2 times.
@@ -43,15 +43,18 @@ State which validator you are using in your final report.
 
 4. **Validate each block.**
 
-   **Using `mmdc`:** write the block's content (excluding the fence lines) to a temporary `.mmd` file and render it:
+   **Using `mmdc`:** use the **Write** tool to put the block's content (excluding the fence lines) into a `.mmd` file beside the markdown file being validated — e.g. `<file>.block-N.mmd` — then render it:
 
    ```
-   mmdc -i /tmp/block-N.mmd -o /tmp/block-N.svg
+   mmdc -i <file>.block-N.mmd -o <file>.block-N.svg
    ```
+
+   Write is the only granted tool that can create a file with content: `mktemp`
+   would produce an empty one and Edit needs existing text to match against.
 
    **Judge the result by `mmdc`'s exit status**: `0` means the diagram parsed and rendered, non-zero means it failed. Verified against mermaid-cli 11.16.0: a valid diagram exits 0 and writes the SVG; an invalid one exits 1 and writes nothing. As a belt-and-braces check you may also confirm the output `.svg` exists and is non-empty, but do not judge success by substring-matching the word "error" in the output — the exit status is the reliable signal.
 
-   On failure, take the error text from the combined output for use in step 5. Leave the temporary files in place — they sit under the system temp directory and are reclaimed with the container.
+   On failure, take the error text from the combined output for use in step 5. Leave the `.mmd` and `.svg` files in place — this skill has no delete permission, and they are harmless alongside the analysis. Mention in your report that they can be removed.
 
    **Using the MCP tool:** call `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram` with:
    - `mermaidCode`: the content between the fences (excluding the fence lines themselves)
