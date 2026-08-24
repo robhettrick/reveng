@@ -903,6 +903,17 @@ cmd_synth_analyses() {
   local detail entry sections
   for entry in "${ANALYSIS_AGENTS[@]}"; do
     IFS='|' read -r agent out sections <<<"$entry"
+
+    # Recover an orphaned .prev before deciding anything. A run killed outright
+    # (SIGKILL, OOM, host death) dies between moving $out aside and the agent
+    # writing its replacement, leaving a complete analysis in .prev and nothing
+    # at $out. Nothing else here produces that state, so restoring is
+    # unambiguous — and it saves a full analyst pass.
+    if [[ "$DRY_RUN" != "true" && -e "$out.prev" && ! -f "$out" ]]; then
+      if mv -f "$out.prev" "$out" 2>/dev/null; then
+        echo "▸ Recovered $out from $out.prev (an earlier run was interrupted)"
+      fi
+    fi
     if [[ -f "$out" ]]; then
       if [[ "${SYNTH_FORCE:-false}" == "true" ]]; then
         echo "▸ Reusing existing $out (--force: not checked)"
@@ -936,14 +947,15 @@ cmd_synth_analyses() {
     local prev=""
     if [[ "$DRY_RUN" != "true" && -f "$out" ]]; then
       prev="$out.prev"
-      # Never overwrite an existing .prev. An interrupted earlier run can leave a
-      # good analysis there while $out holds its truncated output — moving $out
-      # over .prev would destroy the better copy, the exact loss .prev exists to
-      # prevent.
+      # Both files present is the one ambiguous case: .prev may hold a good
+      # analysis while $out holds an interrupted run's truncated output, and
+      # moving $out over .prev would destroy the better copy. The $out-absent
+      # case is already recovered during planning, above.
       if [[ -e "$prev" ]]; then
-        echo "Error: $prev already exists, so an earlier run was interrupted." >&2
-        echo "       It may hold a better copy than the current $out." >&2
-        echo "       Compare the two, then remove or rename $prev and re-run." >&2
+        echo "Error: $prev already exists alongside $out." >&2
+        echo "       One of them may be an interrupted run's partial output," >&2
+        echo "       and this cannot tell which. Compare both, then remove or" >&2
+        echo "       rename $prev and re-run." >&2
         return 1
       fi
       # An analyst run can last hours, so an interrupt inside this window is
