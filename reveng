@@ -170,13 +170,9 @@ record_run_metrics() {
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-<<<<<<< HEAD
-    fromjson? | objects | select(.type == "result") | {
-=======
     [ inputs | fromjson? | objects | select(.type == "result") ]
     | (map(select(.duration_ms != null)) | max_by(.duration_ms)) // last
     | select(. != null) | {
->>>>>>> ba4934c (fix: output metrics correctly)
       ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
       cost_usd: .total_cost_usd, duration_ms: .duration_ms,
