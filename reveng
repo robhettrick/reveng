@@ -329,25 +329,32 @@ run_claude() {
   local recorded=true
   record_run_metrics "$raw_log" "$model" || recorded=false
 
-  # A run that dies before emitting a result event yields no row, so spend on
-  # failures — exactly the runs a retry loop makes expensive — would be missing
-  # from the totals. Record a minimal row in that case.
-  if [[ $claude_exit -ne 0 ]] && ! $recorded; then
+  # A run that emits no result event yields no row, so spend on it would be
+  # missing from the totals. The absent row is the signal — not the exit code:
+  # Claude can exit 0 having produced no result event at all, and that case was
+  # previously recorded nowhere and reported nowhere.
+  if ! $recorded; then
     record_failed_run "$model" "$claude_exit"
   fi
 
   # Report any line that was not valid JSON, whether or not the run failed. If
   # any were seen the log is worth keeping even on success, so the path printed
   # here still resolves.
-  # Detection and reporting must use the same filter. A blank line is not worth
-  # reporting, and treating it as non-JSON would print an empty notice and then
-  # permanently retain a file holding the full analysis of the target codebase.
-  local saw_non_json=false non_json
-  non_json=$(grep -nvE '^[[:space:]]*(\{|$)' "$raw_log" 2>/dev/null | head -5) || true
-  if [[ -n "$non_json" ]]; then
+  # Report any line the JSON filter could not parse. Pattern-matching on a
+  # leading brace is not enough: a line cut off mid-write still starts with "{",
+  # so it is neither parsed nor reported — silently losing exactly the truncated
+  # result event this whole guard exists to notice. Ask jq itself which lines it
+  # could not read, so detection and parsing can never disagree.
+  local saw_non_json=false unparsed
+  unparsed=$(jq -rR --arg n 5 '
+    select((. | test("^[[:space:]]*$")) | not)
+    | select((fromjson? // null) == null)
+    | "\(input_line_number): \(.[0:120])"
+  ' "$raw_log" 2>/dev/null | head -5) || true
+  if [[ -n "$unparsed" ]]; then
     saw_non_json=true
-    echo "Note: non-JSON lines in Claude's output stream (raw log: $raw_log):" >&2
-    printf '%s\n' "$non_json" >&2
+    echo "Note: unparseable lines in Claude's output stream (raw log: $raw_log):" >&2
+    printf '%s\n' "$unparsed" >&2
   fi
 
   if [[ $claude_exit -ne 0 ]]; then
