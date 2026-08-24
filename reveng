@@ -386,8 +386,13 @@ check_analysis_complete() {
       found=$(grep -cE '^##[[:space:]]+[^#[:space:]]' "$file" 2>/dev/null) || true
       local non_section
       non_section=$(grep -ciE '^##[[:space:]]+(metadata|introduction|overview|how to read|contents|table of contents|summary|sources|appendix)' "$file" 2>/dev/null) || true
-      (( found -= non_section ))
-      (( found < 0 )) && found=0
+      # Assignment form, not (( found -= ... )): that returns exit 1 whenever the
+      # result is zero, which would abort the function under errexit the first
+      # time this is called outside an if condition.
+      found=$(( found - non_section ))
+      if (( found < 0 )); then
+        found=0
+      fi
     fi
     if (( found < expected_sections )); then
       echo "only $found of $expected_sections sections present — run stopped early"
@@ -871,21 +876,30 @@ cmd_synth_analyses() {
       fi
       return 1
     fi
-    if [[ -n "$prev" ]]; then
-      rm -f "$prev"
-    fi
-
     # If a file we just regenerated still fails, say so and stop. Deferring to
     # validate_analyses would let the next invocation regenerate it again on the
     # same terms — a full analyst pass per run with no way out but --force.
+    #
+    # The previous file is still held as .prev at this point: discarding it
+    # before this check would leave the worse of the two on disk when the new
+    # one turns out to be incomplete.
     if [[ "$DRY_RUN" != "true" ]]; then
       if ! detail=$(check_analysis_complete "$out" "$sections"); then
         echo "Error: $agent produced $out but it is still incomplete ($detail)." >&2
+        if [[ -n "$prev" && -f "$prev" ]]; then
+          mv -f "$prev" "$out" 2>/dev/null || true
+          echo "       Restored the previous $out." >&2
+        fi
         echo "       Re-running will repeat this. Check the agent's mandatory" >&2
         echo "       section list against what it wrote, or pass --force to" >&2
         echo "       proceed with the file as it stands." >&2
         return 1
       fi
+    fi
+
+    # New file passed — the previous one is now safe to discard.
+    if [[ -n "$prev" ]]; then
+      rm -f "$prev"
     fi
   done
 
