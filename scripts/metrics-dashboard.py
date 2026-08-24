@@ -24,7 +24,7 @@ import streamlit as st
 DEFAULT_LOG = pathlib.Path(
     os.environ.get(
         "REVENG_METRICS_LOG",
-        pathlib.Path.home() / ".config" / "reveng" / "metrics.jsonl",
+        pathlib.Path.home() / ".config" / "reveng" / "metrics" / "metrics.jsonl",
     )
 )
 

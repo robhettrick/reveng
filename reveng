@@ -133,6 +133,12 @@ record_run_metrics() {
   [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
   local out="${REVENG_METRICS_LOG:-$CONFIG_DIR/metrics/metrics.jsonl}"
   [[ -f "$raw_log" ]] || return 0
+  if [[ -f "$out" ]]; then
+    REVENG_METRICS_ROWS_BEFORE=$(wc -l < "$out" 2>/dev/null | tr -d ' ') || REVENG_METRICS_ROWS_BEFORE=0
+  else
+    REVENG_METRICS_ROWS_BEFORE=0
+  fi
+  : "${REVENG_METRICS_ROWS_BEFORE:=0}"
   if ! mkdir -p "$(dirname "$out")" 2>/dev/null; then
     metrics_unwritable_note "$out"
     return 0
@@ -165,6 +171,14 @@ record_run_metrics() {
     }' "$raw_log" >> "$out" 2>/dev/null || true
   chmod 600 "$out" 2>/dev/null || true
 
+  # Report whether a row was actually emitted, so callers need not parse the
+  # same file a second way. Keyed off the authoritative jq filter above.
+  local after=0
+  if [[ -f "$out" ]]; then
+    after=$(wc -l < "$out" 2>/dev/null | tr -d ' ') || after=0
+  fi
+  [[ "${after:-0}" -gt "${REVENG_METRICS_ROWS_BEFORE:-0}" ]] || return 1
+
   # Trim to the newest N rows so the log cannot grow without bound.
   local keep="${REVENG_METRICS_KEEP:-5000}"
   if [[ "$keep" =~ ^[0-9]+$ ]] && (( keep > 0 )); then
@@ -179,6 +193,21 @@ record_run_metrics() {
   fi
 }
 
+# On interrupt, decide whether the partially-written file is worth keeping. A
+# file that is absent or fails the completeness check is worse than the previous
+# one, so restore; a complete file is kept and .prev discarded. Without this an
+# interrupt part-way through writing leaves a truncated $out that the *next*
+# run then moves over .prev, destroying the good analysis.
+restore_prev_on_interrupt() {
+  local out="$1" prev="$2" sections="$3"
+  [[ -n "$prev" && -f "$prev" ]] || return 0
+  if [[ -f "$out" ]] && check_analysis_complete "$out" "$sections" >/dev/null 2>&1; then
+    rm -f "$prev"
+  else
+    mv -f "$prev" "$out" 2>/dev/null || true
+  fi
+}
+
 # Emit a row for a run that produced no result event (killed, crashed, or cut
 # off). Cost is unknown — recorded as null so it is visibly absent rather than
 # silently counted as zero.
@@ -188,6 +217,7 @@ record_failed_run() {
   local out="${REVENG_METRICS_LOG:-$CONFIG_DIR/metrics/metrics.jsonl}"
   mkdir -p "$(dirname "$out")" 2>/dev/null || return 0
   { : >> "$out"; } 2>/dev/null || return 0
+  chmod 600 "$out" 2>/dev/null || true
   jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
@@ -296,12 +326,13 @@ run_claude() {
 
   local claude_exit="${pipe_status[0]:-0}"
 
-  record_run_metrics "$raw_log" "$model"
+  local recorded=true
+  record_run_metrics "$raw_log" "$model" || recorded=false
 
   # A run that dies before emitting a result event yields no row, so spend on
   # failures — exactly the runs a retry loop makes expensive — would be missing
   # from the totals. Record a minimal row in that case.
-  if [[ $claude_exit -ne 0 ]] && ! grep -q '"type":"result"' "$raw_log" 2>/dev/null; then
+  if [[ $claude_exit -ne 0 ]] && ! $recorded; then
     record_failed_run "$model" "$claude_exit"
   fi
 
@@ -905,7 +936,7 @@ cmd_synth_analyses() {
       # restore, leaving $out gone and .prev orphaned — the next run then
       # regenerates from scratch, which is what .prev exists to avoid.
       # shellcheck disable=SC2064
-      trap "if [[ -f '$prev' && ! -f '$out' ]]; then mv -f '$prev' '$out' 2>/dev/null || true; fi; trap - INT TERM EXIT; exit 130" INT TERM
+      trap "restore_prev_on_interrupt '$out' '$prev' '$sections'; trap - INT TERM; exit 130" INT TERM
       if ! mv -f "$out" "$prev" 2>/dev/null; then
         # Do not fall through: a surviving stale file is exactly what this
         # guard exists to prevent — the agent would resume appending to it and
@@ -922,6 +953,7 @@ cmd_synth_analyses() {
       "$MODEL" \
       "$VERBOSE" \
       "$DRY_RUN"; then
+      trap - INT TERM
       if [[ -n "$prev" && -f "$prev" ]]; then
         mv -f "$prev" "$out" 2>/dev/null || true
         echo "Error: $agent failed. Restored the previous $out." >&2
