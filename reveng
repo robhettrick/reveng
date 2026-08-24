@@ -5,6 +5,15 @@ VERSION="0.2.0"
 CONFIG_DIR="${REVENG_CONFIG_DIR:-$HOME/.config/reveng}"
 PLUGIN_DIR="$CONFIG_DIR/plugin"
 
+# Metrics are cost telemetry about a specific engagement, not about this
+# machine, so they live with the workspace that produced them: the cost record
+# travels with the analysis it justifies, and is already inside the sandbox's
+# workspace mount (no separate bind mount, no host-uid assumption). Rows carry
+# no client content — cost, duration, turns and token counts only. `reveng init`
+# adds .reveng/ to the workspace .gitignore, so committing the cost record is a
+# deliberate act. Set REVENG_METRICS_LOG to aggregate several workspaces.
+METRICS_DIR="${REVENG_METRICS_DIR:-.reveng}"
+
 # Default models per command
 CURATE_DEFAULT_MODEL="opus"
 SYNTH_DEFAULT_MODEL="opus"
@@ -131,7 +140,7 @@ metrics_unwritable_note() {
 record_run_metrics() {
   local raw_log="$1" model="$2"
   [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
-  local out="${REVENG_METRICS_LOG:-$CONFIG_DIR/metrics/metrics.jsonl}"
+  local out="${REVENG_METRICS_LOG:-$METRICS_DIR/metrics.jsonl}"
   [[ -f "$raw_log" ]] || return 0
   if [[ -f "$out" ]]; then
     REVENG_METRICS_ROWS_BEFORE=$(wc -l < "$out" 2>/dev/null | tr -d ' ') || REVENG_METRICS_ROWS_BEFORE=0
@@ -153,13 +162,19 @@ record_run_metrics() {
     return 0
   fi
 
-  jq -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
+  # A stream can carry more than one result event (an interim one plus the
+  # final): filtering per line emitted a row for each, double-counting cost.
+  # Collect them and keep the last, which is the authoritative cumulative one.
+  # -n with `inputs` so a zero-result stream yields nothing at all, leaving
+  # record_failed_run to handle it rather than writing a row of nulls.
+  jq -n -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
         --arg model "$model" \
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
-    fromjson? | objects | select(.type == "result") | {
+    [ inputs | fromjson? | objects | select(.type == "result") ]
+    | last | select(. != null) | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
       cost_usd: .total_cost_usd, duration_ms: .duration_ms,
@@ -169,7 +184,6 @@ record_run_metrics() {
       cache_read_tokens: .usage.cache_read_input_tokens,
       cache_write_tokens: .usage.cache_creation_input_tokens
     }' "$raw_log" >> "$out" 2>/dev/null || true
-  chmod 600 "$out" 2>/dev/null || true
 
   # Report whether a row was actually emitted, so callers need not parse the
   # same file a second way. Keyed off the authoritative jq filter above.
@@ -192,7 +206,6 @@ record_run_metrics() {
       else
         rm -f "$tmp"
       fi
-      chmod 600 "$out" 2>/dev/null || true
     fi
   fi
 }
@@ -218,10 +231,9 @@ restore_prev_on_interrupt() {
 record_failed_run() {
   local model="$1" exit_code="$2"
   [[ "${REVENG_METRICS:-on}" != "off" ]] || return 0
-  local out="${REVENG_METRICS_LOG:-$CONFIG_DIR/metrics/metrics.jsonl}"
+  local out="${REVENG_METRICS_LOG:-$METRICS_DIR/metrics.jsonl}"
   mkdir -p "$(dirname "$out")" 2>/dev/null || return 0
   { : >> "$out"; } 2>/dev/null || return 0
-  chmod 600 "$out" 2>/dev/null || true
   jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
@@ -734,6 +746,7 @@ Creates:
 
 Adds to .gitignore:
   .claude/
+  .reveng/
   output/html/
   output/transcripts/*_curated.txt
 
@@ -771,8 +784,17 @@ EOF
     fi
   fi
 
-  local gitignore_entries=(".claude/" "output/html/" "output/transcripts/*_curated.txt")
+  # .reveng/ holds the run-cost log. Ignored by default so cost data is never
+  # committed by accident; un-ignore it deliberately to keep the cost record
+  # with the analysis (e.g. as evidence in a business case).
+  local gitignore_entries=(".claude/" ".reveng/" "output/html/" "output/transcripts/*_curated.txt")
   local touched=false
+  # A .gitignore whose last line has no trailing newline would otherwise get the
+  # first new entry concatenated onto it, silently corrupting both rules (e.g.
+  # ".env" + ".reveng/" -> ".env.reveng/", ignoring neither). Terminate it first.
+  if [[ -f .gitignore && -s .gitignore ]] && [[ -n "$(tail -c 1 .gitignore)" ]]; then
+    echo "" >> .gitignore
+  fi
   for entry in "${gitignore_entries[@]}"; do
     if [[ ! -f .gitignore ]] || ! grep -qxF "$entry" .gitignore; then
       echo "$entry" >> .gitignore
@@ -1145,14 +1167,12 @@ EOF
 
   # ── Build mounts ─────────────────────────────────────────────────────────
 
-  # Only $CONFIG_DIR/metrics is bind-mounted into the sandbox — deliberately not
-  # the whole config directory. Mounting all of it would expose plugin/ (the
-  # installed agents and skills) read-write to a container whose Claude runs
-  # with --dangerously-skip-permissions, so an agent inside the sandbox could
-  # rewrite agents that later execute on the host. Create the source here so
-  # Docker cannot auto-create it as a root-owned directory the node user cannot
-  # write to.
-  mkdir -p "$CONFIG_DIR/metrics" 2>/dev/null || true
+  # Nothing from $CONFIG_DIR is mounted. Metrics now live in the workspace
+  # (.reveng/), which is already inside the workspace mount, so no separate
+  # bind mount is needed — and mounting the whole config directory would expose
+  # plugin/ (the installed agents and skills) read-write to a container whose
+  # Claude runs with --dangerously-skip-permissions, letting an agent inside the
+  # sandbox rewrite agents that later execute on the host.
 
   local mounts=()
 
@@ -1163,10 +1183,9 @@ EOF
     mounts+=("--mount" "type=bind,source=$reveng_bin,target=/usr/local/bin/reveng")
   fi
 
-  # Note: ~/.claude and ~/.config/reveng/metrics are mounted via
-  # devcontainer.json (not here) to avoid duplicate mounts. Agents and skills
-  # travel with the workspace via .claude/, so the installed plugin/ directory
-  # is deliberately not mounted.
+  # Note: ~/.claude is mounted via devcontainer.json (not here) to avoid
+  # duplicate mounts. Agents and skills travel with the workspace via .claude/,
+  # so the installed plugin/ directory is deliberately not mounted.
 
   # SSH keys (optional)
   if [[ -d "$HOME/.ssh" ]]; then

@@ -21,12 +21,27 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-DEFAULT_LOG = pathlib.Path(
-    os.environ.get(
-        "REVENG_METRICS_LOG",
-        pathlib.Path.home() / ".config" / "reveng" / "metrics" / "metrics.jsonl",
-    )
-)
+def _default_log() -> pathlib.Path:
+    """Mirror reveng's own resolution order.
+
+    Metrics live with the workspace that produced them (.reveng/metrics.jsonl),
+    so running the dashboard from a workspace just works. The legacy per-user
+    location is used as a fallback so older logs remain viewable, and
+    REVENG_METRICS_LOG overrides both (the aggregate-several-workspaces case).
+    """
+    override = os.environ.get("REVENG_METRICS_LOG")
+    if override:
+        return pathlib.Path(override)
+    local = pathlib.Path(os.environ.get("REVENG_METRICS_DIR", ".reveng")) / "metrics.jsonl"
+    if local.is_file():
+        return local
+    legacy = pathlib.Path.home() / ".config" / "reveng" / "metrics" / "metrics.jsonl"
+    if legacy.is_file():
+        return legacy
+    return local
+
+
+DEFAULT_LOG = _default_log()
 
 st.set_page_config(page_title="reveng metrics", page_icon="📊", layout="wide")
 st.title("reveng — run cost and quality")
