@@ -239,10 +239,19 @@ run_claude() {
       raw_log="$REVENG_RAW_LOG"
     fi
   else
-    raw_log=$(mktemp "${TMPDIR:-/tmp}/reveng-raw-XXXXXX.jsonl") || {
+    # BSD mktemp (macOS) only substitutes a *trailing* run of X's, so a template
+    # like reveng-raw-XXXXXX.jsonl is taken literally: the first call creates
+    # that exact name and every later call fails with "File exists". Generate
+    # with the X's last, then add the extension.
+    local raw_base
+    raw_base=$(mktemp "${TMPDIR:-/tmp}/reveng-raw-XXXXXX") || {
       echo "Error: could not create a temporary file for the output stream." >&2
       return 1
     }
+    raw_log="$raw_base.jsonl"
+    if ! mv -f "$raw_base" "$raw_log" 2>/dev/null; then
+      raw_log="$raw_base"   # keep the extensionless file rather than fail
+    fi
     created_raw_log=true
   fi
   chmod 600 "$raw_log" 2>/dev/null || true
