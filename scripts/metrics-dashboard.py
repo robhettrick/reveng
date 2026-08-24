@@ -25,20 +25,20 @@ def _default_log() -> pathlib.Path:
     """Mirror reveng's own resolution order.
 
     Metrics live with the workspace that produced them (.reveng/metrics.jsonl),
-    so running the dashboard from a workspace just works. The legacy per-user
-    location is used as a fallback so older logs remain viewable, and
-    REVENG_METRICS_LOG overrides both (the aggregate-several-workspaces case).
+    so running the dashboard from a workspace just works. REVENG_METRICS_LOG
+    overrides that (the aggregate-several-workspaces case).
+
+    Deliberately does NOT fall back to the pre-0.2 per-user location: silently
+    reading a different file shows plausible but wrong figures, which is worse
+    than showing nothing. The empty state points at it explicitly instead.
     """
     override = os.environ.get("REVENG_METRICS_LOG")
     if override:
         return pathlib.Path(override)
-    local = pathlib.Path(os.environ.get("REVENG_METRICS_DIR", ".reveng")) / "metrics.jsonl"
-    if local.is_file():
-        return local
-    legacy = pathlib.Path.home() / ".config" / "reveng" / "metrics" / "metrics.jsonl"
-    if legacy.is_file():
-        return legacy
-    return local
+    return pathlib.Path(os.environ.get("REVENG_METRICS_DIR", ".reveng")) / "metrics.jsonl"
+
+
+LEGACY_LOG = pathlib.Path.home() / ".config" / "reveng" / "metrics" / "metrics.jsonl"
 
 
 DEFAULT_LOG = _default_log()
@@ -88,10 +88,21 @@ path_input = st.sidebar.text_input("Metrics log", str(DEFAULT_LOG))
 df = load(pathlib.Path(path_input))
 
 if df.empty:
-    st.info(
-        f"No metrics found at `{path_input}`.\n\n"
-        "Run any `reveng` command to record the first row."
-    )
+    msg = [
+        f"No metrics found at `{path_input}`.",
+        "",
+        "Metrics are recorded per workspace, so start the dashboard from the "
+        "workspace directory (or set `REVENG_METRICS_LOG`).",
+    ]
+    if LEGACY_LOG.is_file():
+        msg += [
+            "",
+            f"A pre-0.2 log exists at `{LEGACY_LOG}`. It is **not** read "
+            "automatically, because rows written before the run-scope fix can "
+            "double-count cost and mix per-call figures with run totals. Point "
+            "the box above at it only if you want to inspect that history.",
+        ]
+    st.info("\n".join(msg))
     st.stop()
 
 # ── Filters ──────────────────────────────────────────────────────────────────

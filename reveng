@@ -162,11 +162,19 @@ record_run_metrics() {
     return 0
   fi
 
-  # A stream can carry more than one result event (an interim one plus the
-  # final): filtering per line emitted a row for each, double-counting cost.
-  # Collect them and keep the last, which is the authoritative cumulative one.
-  # -n with `inputs` so a zero-result stream yields nothing at all, leaving
-  # record_failed_run to handle it rather than writing a row of nulls.
+  # `--verbose` makes the stream carry a result event per sub-call as well as
+  # one for the run itself, and they do not arrive parent-last. Filtering per
+  # line wrote a row for each (double-counting cost); taking the last spliced
+  # the parent's cumulative cost onto a subagent's duration and turn count —
+  # e.g. a 24-minute run recorded as 11.8s / 1 turn while keeping its $30 cost.
+  # Cost is cumulative and repeated on every event, so it looked right while
+  # the per-call fields were wrong, which is why this hid.
+  #
+  # Pick by scope instead of position: the run necessarily spans every sub-call,
+  # so it is the result with the greatest duration_ms. Fall back to the last
+  # event if no result carries a duration, and -n with `inputs` so a stream with
+  # no result at all yields nothing, leaving record_failed_run to handle it
+  # rather than writing a row of nulls.
   jq -n -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
         --arg model "$model" \
@@ -174,7 +182,8 @@ record_run_metrics() {
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
     [ inputs | fromjson? | objects | select(.type == "result") ]
-    | last | select(. != null) | {
+    | (map(select(.duration_ms != null)) | max_by(.duration_ms)) // last
+    | select(. != null) | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
       cost_usd: .total_cost_usd, duration_ms: .duration_ms,

@@ -70,14 +70,20 @@ reveng synth --run-id synth-fable-baseline -m fable
 reveng synth --run-id synth-opus-baseline  -m opus
 ```
 
-View the dashboard (no install needed):
+View the dashboard (no install needed) — **run it from the workspace**, since the
+log path it defaults to is relative:
 
 ```bash
+cd /path/to/workspace
 uv run --with streamlit --with plotly --with pandas \
   streamlit run ~/.config/reveng/scripts/metrics-dashboard.py
 ```
 
-(`install.sh` copies it there; from a git checkout, `scripts/metrics-dashboard.py` works too.)
+The script lives in the config directory (`install.sh` copies it there; from a git
+checkout, `scripts/metrics-dashboard.py` works too) but reads `.reveng/metrics.jsonl`
+from the current directory. Started from elsewhere it reports that it found no log
+rather than silently reading a different one — pre-0.2 logs are not picked up
+automatically, because rows written before the run-scope fix can double-count cost.
 
 It plots cost per run, mean cost by command and model, cost per 1k output tokens by model, cumulative spend, cost against output volume, and a per-phase breakdown — `synth` records a separate row per analyst (`/synth/analysis/<agent>`) and one for the PRD (`/synth/prd`).
 
