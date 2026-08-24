@@ -429,48 +429,38 @@ check_analysis_complete() {
   # required to produce. No tail-of-file heuristic can see this — a file
   # truncated after section 6 of 10 ends on a perfectly ordinary line.
   #
-  # Counts top-level numbered sections: "## 3. Title". The trailing space after
-  # the dot is what excludes sub-numbering ("## 3.1", "### 3.1.2"), which would
-  # otherwise inflate the count and mask a short run. If nothing matches at h2
-  # the same shape is tried at h3, so an agent that renders one level deeper is
-  # still counted rather than silently passing with zero.
+  # Counted in a single fence-aware awk pass. A grep over the whole file would
+  # also count headings inside ```fenced``` examples — an analysis quoting a
+  # legacy document's structure would then pass while truncated, which is the
+  # false pass this gate exists to catch.
   #
-  # No "|| echo 0" on the grep: grep -c already prints 0 and exits 1 when
-  # nothing matches, so the fallback would append a second line, yielding
-  # $'0\n0' — which fails a numeric test and silently skips the check.
+  # Tiers, in order: "## N. Title" (what the specs instruct), then "### N. Title"
+  # for an agent that rendered one level deeper, then bare "## Title" minus the
+  # non-section blocks the templates use, so an unnumbered but complete file is
+  # not condemned to a full regeneration.
   if [[ -n "$expected_sections" ]]; then
     local found
-    # "|| true" is required, not cosmetic: grep -c exits 1 when the count is
-    # zero, and a bare assignment adopts that status — under errexit the script
-    # would die here with no message. The count is still printed, so this does
-    # not reintroduce the $'0\n0' problem that "|| echo 0" caused.
-    found=$(grep -cE '^##[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
-    if (( found == 0 )); then
-      found=$(grep -cE '^###[[:space:]]+[0-9]+\.[[:space:]]' "$file" 2>/dev/null) || true
-    fi
-    # Last tier: an agent that wrote "## Title" without the number is not
-    # truncated, it just numbered nothing — condemning that file to a full
-    # regeneration (which would repeat the same formatting) is the expensive
-    # failure. Count bare h2 headings, excluding the handful of non-section
-    # blocks the templates use, so a "## Metadata" table cannot pad the total.
-    if (( found == 0 )); then
-      found=$(grep -cE '^##[[:space:]]+[^#[:space:]]' "$file" 2>/dev/null) || true
-      local non_section
-      non_section=$(grep -ciE '^##[[:space:]]+(metadata|introduction|overview|how to read|contents|table of contents|summary|sources|appendix)' "$file" 2>/dev/null) || true
-      # Assignment form, not (( found -= ... )): that returns exit 1 whenever the
-      # result is zero, which would abort the function under errexit the first
-      # time this is called outside an if condition.
-      found=$(( found - non_section ))
-      if (( found < 0 )); then
-        found=0
-      fi
-    fi
+    found=$(awk '
+      /^[[:space:]]*```/ { fence = !fence; next }
+      fence { next }
+      /^##[[:space:]]+[0-9]+\.[[:space:]]/  { h2n++; next }
+      /^###[[:space:]]+[0-9]+\.[[:space:]]/ { h3n++; next }
+      /^##[[:space:]]+[^#[:space:]]/ {
+        if (tolower($0) ~ /^##[[:space:]]+(metadata|introduction|overview|how to read|contents|table of contents|summary|sources|appendix)/) next
+        h2b++
+      }
+      END {
+        if (h2n > 0)      print h2n
+        else if (h3n > 0) print h3n
+        else              print h2b + 0
+      }
+    ' "$file" 2>/dev/null) || found=0
+    : "${found:=0}"
     if (( found < expected_sections )); then
       echo "only $found of $expected_sections sections present — run stopped early"
       return 1
     fi
   fi
-
   return 0
 }
 
@@ -931,6 +921,16 @@ cmd_synth_analyses() {
     local prev=""
     if [[ "$DRY_RUN" != "true" && -f "$out" ]]; then
       prev="$out.prev"
+      # Never overwrite an existing .prev. An interrupted earlier run can leave a
+      # good analysis there while $out holds its truncated output — moving $out
+      # over .prev would destroy the better copy, the exact loss .prev exists to
+      # prevent.
+      if [[ -e "$prev" ]]; then
+        echo "Error: $prev already exists, so an earlier run was interrupted." >&2
+        echo "       It may hold a better copy than the current $out." >&2
+        echo "       Compare the two, then remove or rename $prev and re-run." >&2
+        return 1
+      fi
       # An analyst run can last hours, so an interrupt inside this window is
       # likely. Without a trap, SIGINT kills the script between the move and the
       # restore, leaving $out gone and .prev orphaned — the next run then
@@ -1120,12 +1120,6 @@ EOF
 
   # ── Build mounts ─────────────────────────────────────────────────────────
 
-  # devcontainer.json bind-mounts $CONFIG_DIR so metrics written inside the
-  # container land on the host. If the source does not exist Docker creates it
-  # as a root-owned directory that the container's node user cannot write to —
-  # and every failure path in record_run_metrics is deliberately silent, so the
-  # symptom would be an empty dashboard with no error anywhere. Create it here,
-  # owned by the invoking user, so that case cannot arise.
   # Only $CONFIG_DIR/metrics is bind-mounted into the sandbox — deliberately not
   # the whole config directory. Mounting all of it would expose plugin/ (the
   # installed agents and skills) read-write to a container whose Claude runs
@@ -1144,12 +1138,10 @@ EOF
     mounts+=("--mount" "type=bind,source=$reveng_bin,target=/usr/local/bin/reveng")
   fi
 
-  # Note: ~/.claude and ~/.config/reveng are mounted via devcontainer.json (not
-  # here) to avoid duplicate mounts. Agents and skills still travel with the
-  # workspace via .claude/, so nothing reads the mounted plugin/ directory during
-  # curate/synth/decompose — but because $CONFIG_DIR is mounted whole (for
-  # metrics), plugin/ is visible inside the container, which means `reveng init`
-  # now works there too.
+  # Note: ~/.claude and ~/.config/reveng/metrics are mounted via
+  # devcontainer.json (not here) to avoid duplicate mounts. Agents and skills
+  # travel with the workspace via .claude/, so the installed plugin/ directory
+  # is deliberately not mounted.
 
   # SSH keys (optional)
   if [[ -d "$HOME/.ssh" ]]; then
