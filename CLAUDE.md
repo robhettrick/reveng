@@ -6,6 +6,16 @@ A lightweight harness around Claude Code for reverse-engineering legacy applicat
 
 Organisations often maintain large estates of legacy applications built across decades using a variety of technologies. Reveng helps engineers understand, document, and modernise these systems regardless of language, framework, or database stack.
 
+## Verification
+
+There is no test suite. Before committing, both shell scripts must pass shellcheck with the default rule set:
+
+```bash
+shellcheck reveng install.sh
+```
+
+This must exit 0. Optional rules (`-o all`) surface pre-existing style findings and are not part of the check.
+
 ## Conventions for working on this source repo
 
 - Use British English in all documentation

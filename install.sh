@@ -134,6 +134,19 @@ for file in Dockerfile devcontainer.json; do
 done
 echo "  Installed container config to $CONTAINER_DIR/"
 
+# Helper scripts (metrics dashboard)
+if [[ -d "$SCRIPT_DIR/scripts" ]]; then
+  mkdir -p "$CONFIG_DIR/scripts"
+  for file in "$SCRIPT_DIR/scripts"/*; do
+    [[ -f "$file" ]] || continue
+    cp "$file" "$CONFIG_DIR/scripts/$(basename "$file")"
+    if [[ "$file" == *.py || "$file" == *.sh ]]; then
+      chmod +x "$CONFIG_DIR/scripts/$(basename "$file")"
+    fi
+  done
+  echo "  Installed scripts to $CONFIG_DIR/scripts/"
+fi
+
 # ── PATH check ──────────────────────────────────────────────────────────────
 
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
