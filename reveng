@@ -187,7 +187,11 @@ record_run_metrics() {
     if [[ "$n" =~ ^[0-9]+$ ]] && (( n > keep )); then
       local tmp
       tmp=$(mktemp "${out}.XXXXXX") || return 0
-      tail -n "$keep" "$out" > "$tmp" 2>/dev/null && mv "$tmp" "$out" || rm -f "$tmp"
+      if tail -n "$keep" "$out" > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$out" 2>/dev/null || rm -f "$tmp"
+      else
+        rm -f "$tmp"
+      fi
       chmod 600 "$out" 2>/dev/null || true
     fi
   fi
@@ -475,7 +479,11 @@ check_analysis_complete() {
 # mandatory" line in each AGENT.md. Nothing enforces the two stay in step, so
 # surface a mismatch rather than silently checking against a stale number.
 check_section_counts_in_sync() {
-  local dir="${1:-.claude/agents}" entry agent file expected declared
+  # Location is fixed rather than a parameter: every caller checks the current
+  # workspace, and an unused parameter with a default trips shellcheck
+  # (SC2120/SC2119). Override with REVENG_AGENTS_DIR for testing.
+  local dir="${REVENG_AGENTS_DIR:-.claude/agents}"
+  local entry agent file expected declared
   [[ -d "$dir" ]] || return 0
   for entry in "${ANALYSIS_AGENTS[@]}"; do
     IFS='|' read -r agent file expected <<<"$entry"
