@@ -61,7 +61,7 @@ With neither validator available the skill exits cleanly with a notice — the r
 
 ### Optional: run cost tracking
 
-Every Claude invocation appends a row to `~/.config/reveng/metrics.jsonl` (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
+Every Claude invocation appends a row to `~/.config/reveng/metrics/metrics.jsonl` (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
 
 Each run gets an id of the form `<command>-<model>-<timestamp>` (e.g. `synth-fable-20260821-142233`). Pass `--run-id` to set a stable label when comparing runs:
 
@@ -87,12 +87,14 @@ It plots cost per run, mean cost by command and model, cost per 1k output tokens
 |----------|--------|
 | `REVENG_METRICS=off` | Disable recording entirely |
 | `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
-| `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics.jsonl` |
+| `REVENG_METRICS_LOG=<path>` | Write somewhere other than `~/.config/reveng/metrics/metrics.jsonl` |
 | `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
 
 **If you have relocated the config directory** with `REVENG_CONFIG_DIR`, note that `devcontainer.json` bind-mounts `${localEnv:HOME}/.config/reveng` by path, so sandbox rows would be written somewhere the host cannot see. Either edit the mount in `~/.config/reveng/container/devcontainer.json` to match your layout, or set `REVENG_METRICS_LOG` to a path under the workspace, which *is* mounted — e.g. `REVENG_METRICS_LOG=/workspace/.reveng-metrics.jsonl`. If you take the second option, add that file to the workspace `.gitignore`: engagement workspaces are usually git repositories, and the log carries per-run cost and token counts for client work.
 
-The mount covers the whole config directory, not just the metrics file, so the host `plugin/` directory is also visible inside the sandbox. Nothing in `curate`/`synth`/`decompose` reads it — agents and skills travel with the workspace under `.claude/` — but it does mean `reveng init` works inside the container as well as on the host.
+Only `~/.config/reveng/metrics` is mounted into the sandbox, not the whole config directory. Mounting all of it would expose the installed `plugin/` agents and skills read-write to a container whose Claude runs with `--dangerously-skip-permissions`, which would let an agent inside the sandbox rewrite agents that later run on the host.
+
+**A call that dies before reporting usage records a row with a null cost**, so failures are visible as a count but their spend is unknown — total spend under-counts runs that crashed or were interrupted.
 
 ### `reveng synth` options
 

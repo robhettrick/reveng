@@ -118,6 +118,17 @@ c5.metric(
 )
 c6.metric("Total time", f"{view['duration_s'].sum() / 3600:,.1f} h")
 
+# Failed runs record a row with a null cost, so they are visible as a count even
+# though their spend is unknown. Without this they would vanish from the totals.
+if "is_error" in view:
+    _failed = int(view["is_error"].fillna(False).astype(bool).sum())
+    if _failed:
+        st.warning(
+            f"{_failed} of {len(view)} recorded calls failed. "
+            "A call that died before reporting usage has no cost figure, "
+            "so spend on failures is under-counted."
+        )
+
 st.divider()
 
 # ── Cost by run, coloured by model ───────────────────────────────────────────
