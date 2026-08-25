@@ -715,8 +715,19 @@ validate_inputs() {
         [[ "$has_curated" == "false" ]] && echo "  missing: output/transcripts/*_curated.txt" >&2
         # If the outputs exist under another name, say so rather than implying
         # the work was never done.
-        local stray
-        stray=$(find output -mindepth 2 -name '*.html' -not -path 'output/html/*' 2>/dev/null | head -3)
+        # find exits non-zero when output/ does not exist, which is precisely the
+        # first-run case this branch fires on: validate_inputs runs before any
+        # directory is created, so a workspace that skipped init has no output/ at
+        # all. Under errexit + pipefail that status aborts the function here,
+        # swallowing the "Run 'reveng curate' first" line below — the very
+        # guidance this block exists to print. Guard the directory and neutralise
+        # the status; a missing output/ simply means there is nothing stray to
+        # report. 2>/dev/null alone does not help: it hides the message, not the
+        # exit code.
+        local stray=""
+        if [[ -d output ]]; then
+          stray=$(find output -mindepth 2 -name '*.html' -not -path 'output/html/*' 2>/dev/null | head -3) || true
+        fi
         if [[ -n "$stray" ]]; then
           echo "  Found .html elsewhere under output/ — reveng only reads output/html/:" >&2
           while IFS= read -r line; do
