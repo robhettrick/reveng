@@ -90,7 +90,7 @@ Invoke the `validate-mermaid` skill on `output/interaction-analysis.md` to valid
 
 Write a single comprehensive file: `output/interaction-analysis.md`
 
-Begin the output file with a metadata block listing every input file that was read, to support provenance tracing in the PRD. For example:
+Begin the output file with a metadata block recording what was read, to support provenance tracing in the PRD. **Cap this block at 50 individual file paths.** If more files than that were read, list no paths and instead record counts by directory or rule type plus the coverage strategy — the block exists so a reader can trace a claim back to its source, and a directory plus a count serves that as well as an exhaustive list. A literal enumeration of a large export runs to thousands of lines: it dwarfs the analysis, and every downstream consumer (notably the product-manager reading this file to build the PRD) pays to read it again. For a small input set, list the files. For example:
 
 ```markdown
 <!-- Input files processed:
@@ -98,6 +98,20 @@ Begin the output file with a metadata block listing every input file that was re
 - output/html/record-movement.html
 - output/transcripts/user-interview_curated.txt
 - output/transcripts/admin-walkthrough_curated.txt
+-->
+```
+
+When the input set is larger than 50 files, write a summary block instead:
+
+```markdown
+<!-- Input files processed:
+Read 3,725 rendered rule files across 4 journey slices under src/.
+- src/customer-create/: 1,204 files (activities 312, flows 88, when 274, decision tables 96, properties 434)
+- src/start-work-schedule/: 987 files (activities 241, flows 64, when 210, decision tables 71, properties 401)
+- ... one line per slice ...
+Coverage: flows, flow actions, decision tables/trees, validations and connectors read
+in full; activities read at step level; properties inventoried. Slice metadata
+(INDEX.md, coverage.json) consulted for every slice.
 -->
 ```
 
@@ -180,6 +194,11 @@ Include at minimum: contradictions between two sources describing the same thing
 - **Number every top-level section, using the numbers in this spec** — e.g. `## 3. Subdomains`. The headings below are shown at `###` because they are nested inside this document; in your output file they are top-level, so write them at `##`. What matters is that the number is present and the numbering is unbroken: the CLI confirms every mandatory section exists by counting numbered headings, and an unnumbered or missing one may be read as a truncated run.
 - **Cite file paths** (`output/html/` and `output/transcripts/` paths) in every section so the reader can trace claims back to source material.
 - **Be exhaustive** — include all discovered content, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
+- **Cover the input, not a sample of it.** Every artefact you read must appear somewhere in the analysis. Length is not the target: a section is finished when it accounts for everything in the source that bears on it, however long that takes. Judge each section by coverage, not by size relative to its neighbours.
+  - **A short section is correct when the source is genuinely empty or absent.** If there are no triggers, say so, state what you looked for and where, and stop. Do not pad it to match a long section — inventing bulk to fill a heading is worse than brevity, because it buries the finding.
+  - **A short section is wrong when the source has material you did not work through.** The test is not "is this section shorter than the others" but "did I leave something in the input unaccounted for". Skimming a populated area and writing a summary line is the failure; correctly reporting an empty one is not.
+  - **Evidence your negatives.** "No triggers found" is far more useful when it names what you searched — the rule types present, the directories covered, the platform equivalent that would have carried the behaviour — and flags anything you could not see from the available material. A well-evidenced negative is short, not thin.
+- **Give the Gaps section the same care.** It is the sole upstream source for the PRD's Open Questions, so under-reporting there does the most damage and is the least visible: an omitted gap looks exactly like an absence of gaps. If you genuinely found none, say so explicitly and say what you checked — but reaching for that conclusion is rarely right on a legacy system, so re-read your own analysis for unresolved points before concluding it.
 - **Append with `cat >>`, not Edit.** Create the file with the **Write** tool (metadata block plus the first section), then append every subsequent section with a single heredoc. Use Write for creation rather than `cat >`, so only appends go through Bash:
 
   ```

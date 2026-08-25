@@ -75,6 +75,10 @@ def load(path: pathlib.Path) -> pd.DataFrame:
         "output_tokens",
         "cache_read_tokens",
         "cache_write_tokens",
+        "total_output_tokens",
+        "total_input_tokens",
+        "total_cache_read_tokens",
+        "total_cache_write_tokens",
     ):
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -103,6 +107,24 @@ def load(path: pathlib.Path) -> pd.DataFrame:
     # Time views mean elapsed time; fall back to latency for pre-elapsed rows
     # rather than to compute_s, which would overstate them several-fold.
     df["duration_s"] = df["elapsed_s"].where(df["elapsed_s"] > 0, df["latency_s"])
+
+    # The per-call fields count only the orchestrator turns. Analysts run as Task
+    # subagents whose tokens land solely in the total_* fields, so those are the
+    # ones to divide cost by; fall back to the narrow field for rows written
+    # before they were captured, rather than reporting zero.
+    for wide, narrow in (
+        ("total_output_tokens", "output_tokens"),
+        ("total_input_tokens", "input_tokens"),
+        ("total_cache_read_tokens", "cache_read_tokens"),
+        ("total_cache_write_tokens", "cache_write_tokens"),
+    ):
+        if wide not in df:
+            df[wide] = 0
+        if narrow not in df:
+            df[narrow] = 0
+        df[f"eff_{narrow}"] = df[wide].where(df[wide] > 0, df[narrow])
+    df["subagent_tokens"] = (df["eff_output_tokens"] - df["output_tokens"]).clip(lower=0)
+
     # Cache hit ratio: reads as a share of all input the model saw.
     denom = df["cache_read_tokens"] + df["input_tokens"]
     df["cache_hit_pct"] = (df["cache_read_tokens"] / denom.where(denom > 0)).fillna(0) * 100
@@ -175,11 +197,11 @@ c4.metric(
     f"{(_reads / (_reads + _fresh) * 100) if (_reads + _fresh) else 0:.0f}%",
     help="Cached input tokens as a share of all input tokens, weighted by volume.",
 )
-_out_k = view["output_tokens"].sum() / 1000
+_out_k = view["eff_output_tokens"].sum() / 1000
 c5.metric(
     "Cost / 1k output",
     f"${(view['cost_usd'].sum() / _out_k) if _out_k else 0:,.3f}",
-    help="Total spend divided by total output tokens — the value-per-pound comparison across models.",
+    help="Total spend divided by output tokens across every model the runs used, subagents included. Rows predating subagent-token capture fall back to the orchestrator-only count, which understates output and so overstates this figure.",
 )
 _compute_h = view["compute_s"].sum() / 3600
 c6.metric(
@@ -212,7 +234,7 @@ per_run = (
     .agg(
         cost_usd=("cost_usd", "sum"),
         duration_s=("duration_s", "sum"),
-        output_tokens=("output_tokens", "sum"),
+        output_tokens=("eff_output_tokens", "sum"),
         calls=("cost_usd", "size"),
     )
     .sort_values("cost_usd", ascending=False)
@@ -252,7 +274,7 @@ with right:
 # ── Cost efficiency by model ─────────────────────────────────────────────────
 _eff = (
     view.groupby("model", as_index=False)
-    .agg(cost_usd=("cost_usd", "sum"), output_tokens=("output_tokens", "sum"))
+    .agg(cost_usd=("cost_usd", "sum"), output_tokens=("eff_output_tokens", "sum"))
     .assign(
         # A model with cost but no recorded output tokens would divide by zero;
         # report it as 0 rather than inf so the chart stays readable.
