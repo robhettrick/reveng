@@ -191,7 +191,19 @@ record_run_metrics() {
       input_tokens: .usage.input_tokens,
       output_tokens: .usage.output_tokens,
       cache_read_tokens: .usage.cache_read_input_tokens,
-      cache_write_tokens: .usage.cache_creation_input_tokens
+      cache_write_tokens: .usage.cache_creation_input_tokens,
+      # .usage counts only the turns the orchestrator itself took. Analysts run
+      # as Task subagents, so their tokens appear solely in .modelUsage: 54,558
+      # against a recorded 2,245 on one real run, a 24x under-count. cost_usd was
+      # always right (it aggregates everything), which is what made this easy to
+      # miss — any cost-per-token figure derived from the four fields above is
+      # wrong by that factor. The totals below span every model the run used,
+      # subagents included, and are the ones to divide cost by.
+      total_output_tokens: ([(.modelUsage // {}) | to_entries[] | .value.outputTokens // 0] | add // null),
+      total_input_tokens: ([(.modelUsage // {}) | to_entries[] | .value.inputTokens // 0] | add // null),
+      total_cache_read_tokens: ([(.modelUsage // {}) | to_entries[] | .value.cacheReadInputTokens // 0] | add // null),
+      total_cache_write_tokens: ([(.modelUsage // {}) | to_entries[] | .value.cacheCreationInputTokens // 0] | add // null),
+      models_used: ((.modelUsage // {}) | keys)
     }' "$raw_log" >> "$out" 2>/dev/null || true
 
   # Report whether a row was actually emitted, so callers need not parse the
@@ -255,7 +267,10 @@ record_failed_run() {
       cost_usd: null, duration_ms: null, num_turns: null,
       is_error: true, exit_code: $code,
       input_tokens: 0, output_tokens: 0,
-      cache_read_tokens: 0, cache_write_tokens: 0 }' >> "$out" 2>/dev/null || true
+      cache_read_tokens: 0, cache_write_tokens: 0,
+      total_output_tokens: null, total_input_tokens: null,
+      total_cache_read_tokens: null, total_cache_write_tokens: null,
+      models_used: null }' >> "$out" 2>/dev/null || true
 }
 
 run_claude() {
