@@ -137,11 +137,20 @@ init_run_id() {
     REVENG_COMMIT=$(git rev-parse --short HEAD 2>/dev/null) || REVENG_COMMIT=""
   fi
   # Uncommitted changes mean the branch name alone does not pin the inputs.
+  # Distinguish "git says the tree is clean" from "git could not tell us":
+  # collapsing both to false would record a sandbox run, where the bind-mounted
+  # .git is routinely refused, as definitely-clean at a known commit rather than
+  # unknown. Empty stays empty so the jq filters serialise it as null, matching
+  # how REVENG_BRANCH and REVENG_COMMIT already behave.
   if [[ -z "${REVENG_DIRTY:-}" ]]; then
-    if git rev-parse --git-dir >/dev/null 2>&1 && [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-      REVENG_DIRTY=true
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+        REVENG_DIRTY=true
+      else
+        REVENG_DIRTY=false
+      fi
     else
-      REVENG_DIRTY=false
+      REVENG_DIRTY=""
     fi
   fi
   export REVENG_BRANCH REVENG_COMMIT REVENG_DIRTY
