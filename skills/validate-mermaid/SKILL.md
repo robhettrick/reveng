@@ -1,7 +1,7 @@
 ---
 name: validate-mermaid
 description: Validates all Mermaid diagram blocks in a markdown file and fixes broken diagrams in place. Uses the local mermaid-cli (mmdc) when available, falling back to the Mermaid Chart MCP tool.
-allowed-tools: Read, Write, Edit, Bash(mmdc*), Bash(command -v*), Bash(rm -f /tmp/*), mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram
+allowed-tools: Read, Write, Edit, Bash(mmdc*), Bash(command -v*), Bash(rm -f /tmp/mermaid-check-*), mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram
 ---
 
 You validate every Mermaid diagram block in a markdown file. For each broken diagram you attempt to fix it in place, retrying up to 2 times.
@@ -63,7 +63,8 @@ State which validator you are using in your final report.
    **Judge the result by `mmdc`'s exit status**: `0` means the diagram parsed and rendered, non-zero means it failed. Verified against mermaid-cli 11.16.0: a valid diagram exits 0 and writes the SVG; an invalid one exits 1 and writes nothing. As a belt-and-braces check you may also confirm the output `.svg` exists and is non-empty, but do not judge success by substring-matching the word "error" in the output — the exit status is the reliable signal.
 
    On failure, take the error text from the combined output for use in step 5.
-   Remove the scratch files when done (`rm -f /tmp/mermaid-check-*`); leaving them
+   Remove the scratch files when done with exactly `rm -f /tmp/mermaid-check-*`
+   — the grant is scoped to that prefix, so a broader path is refused. Leaving them
    is harmless since they are outside the workspace, but tidying is preferred.
 
    **Using the MCP tool:** call `mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram` with:
