@@ -117,6 +117,34 @@ init_run_id() {
   REVENG_CMD="$1"
   REVENG_RUN_ID="${RUN_ID_OVERRIDE:-${1}-${2}-$(date +%Y%m%d-%H%M%S)}"
   export REVENG_CMD REVENG_RUN_ID
+
+  # Record the workspace's branch and commit: they identify which state of the
+  # engagement a cost belongs to, which matters because a workspace is often on
+  # a per-run branch (reveng-run-<date>_<model>). Resolved once per invocation
+  # rather than per phase, so every row in a synth shares one value.
+  #
+  # Best-effort by design. The workspace need not be a git repo, and in the
+  # sandbox the bind-mounted .git is owned by the host uid, which git may refuse
+  # as dubious ownership — in both cases the fields are simply null rather than
+  # failing a run over telemetry. REVENG_BRANCH overrides, for callers that know
+  # better than git does (a detached CI checkout, say).
+  if [[ -z "${REVENG_BRANCH:-}" ]]; then
+    REVENG_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || REVENG_BRANCH=""
+    # A detached HEAD reports "HEAD", which names nothing useful.
+    [[ "$REVENG_BRANCH" == "HEAD" ]] && REVENG_BRANCH=$(git rev-parse --short HEAD 2>/dev/null || echo "detached")
+  fi
+  if [[ -z "${REVENG_COMMIT:-}" ]]; then
+    REVENG_COMMIT=$(git rev-parse --short HEAD 2>/dev/null) || REVENG_COMMIT=""
+  fi
+  # Uncommitted changes mean the branch name alone does not pin the inputs.
+  if [[ -z "${REVENG_DIRTY:-}" ]]; then
+    if git rev-parse --git-dir >/dev/null 2>&1 && [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+      REVENG_DIRTY=true
+    else
+      REVENG_DIRTY=false
+    fi
+  fi
+  export REVENG_BRANCH REVENG_COMMIT REVENG_DIRTY
 }
 
 # Append one JSONL row per Claude invocation. The result event carries the
@@ -170,23 +198,40 @@ record_run_metrics() {
   # Cost is cumulative and repeated on every event, so it looked right while
   # the per-call fields were wrong, which is why this hid.
   #
-  # Pick by scope instead of position: the run necessarily spans every sub-call,
-  # so it is the result with the greatest duration_ms. Fall back to the last
-  # event if no result carries a duration, and -n with `inputs` so a stream with
-  # no result at all yields nothing, leaving record_failed_run to handle it
-  # rather than writing a row of nulls.
+  # Pick by scope instead of position: the run-level event is the one whose
+  # duration_ms is greatest. Fall back to the last event if no result carries a
+  # duration, and -n with `inputs` so a stream with no result at all yields
+  # nothing, leaving record_failed_run to handle it rather than a row of nulls.
+  #
+  # Both duration fields are recorded because neither is wall-clock and they
+  # differ by orders of magnitude. duration_ms is the orchestrator's own
+  # turnaround (33s on a run that took 7m15s); duration_api_ms is aggregate API
+  # time across every sub-call, so with concurrent subagents it can exceed wall
+  # clock (34 min on that same run). Treat duration_api_ms as the measure of
+  # work done and duration_ms as the top-level latency; for elapsed time, use
+  # the gap between consecutive ts values.
   jq -n -cR --arg run_id "${REVENG_RUN_ID:-unknown}" \
         --arg command "${REVENG_CMD:-unknown}" \
         --arg model "$model" \
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
-        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        --arg branch "${REVENG_BRANCH:-}" \
+        --arg commit "${REVENG_COMMIT:-}" \
+        --arg dirty "${REVENG_DIRTY:-}" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg elapsed "${REVENG_ELAPSED_MS:-}" '
     [ inputs | fromjson? | objects | select(.type == "result") ]
     | (map(select(.duration_ms != null)) | max_by(.duration_ms)) // last
     | select(. != null) | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
-      cost_usd: .total_cost_usd, duration_ms: .duration_ms,
+      branch: (if $branch == "" then null else $branch end),
+      commit: (if $commit == "" then null else $commit end),
+      dirty: (if $dirty == "" then null else $dirty == "true" end),
+      cost_usd: .total_cost_usd,
+      elapsed_ms: ($elapsed | if . == "" then null else tonumber end),
+      duration_ms: .duration_ms,
+      duration_api_ms: .duration_api_ms,
       num_turns: .num_turns, is_error: .is_error,
       input_tokens: .usage.input_tokens,
       output_tokens: .usage.output_tokens,
@@ -249,10 +294,17 @@ record_failed_run() {
         --arg model "$model" \
         --arg phase "${REVENG_PHASE:-/${REVENG_CMD:-unknown}}" \
         --arg workspace "${REVENG_WORKSPACE:-$(basename "$PWD")}" \
+        --arg branch "${REVENG_BRANCH:-}" \
+        --arg commit "${REVENG_COMMIT:-}" \
+        --arg dirty "${REVENG_DIRTY:-}" \
         --argjson code "$exit_code" '
     { ts: $ts, run_id: $run_id, command: $command, model: $model,
       phase: $phase, workspace: $workspace,
-      cost_usd: null, duration_ms: null, num_turns: null,
+      branch: (if $branch == "" then null else $branch end),
+      commit: (if $commit == "" then null else $commit end),
+      dirty: (if $dirty == "" then null else $dirty == "true" end),
+      cost_usd: null, elapsed_ms: null, duration_ms: null,
+      duration_api_ms: null, num_turns: null,
       is_error: true, exit_code: $code,
       input_tokens: 0, output_tokens: 0,
       cache_read_tokens: 0, cache_write_tokens: 0 }' >> "$out" 2>/dev/null || true
@@ -339,6 +391,7 @@ run_claude() {
   # diagnostics and metrics below on exactly the runs that need them. Suspend it
   # around the pipeline only; the exit status is handled explicitly afterwards.
   local -a pipe_status=()
+  local run_started_at=$SECONDS
   set +e
   if [[ "$verbose" == "true" ]]; then
     "${cmd[@]}" 2>&1 | tee "$raw_log" /dev/stderr | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
@@ -350,6 +403,12 @@ run_claude() {
   set -e
 
   local claude_exit="${pipe_status[0]:-0}"
+
+  # Elapsed wall-clock. No field in the result event carries it: duration_ms is
+  # the top-level turnaround and duration_api_ms is summed across concurrent
+  # sub-calls, so both can be wildly out (33s and 34min on the same 7m15s run).
+  REVENG_ELAPSED_MS=$(( (SECONDS - run_started_at) * 1000 ))
+  export REVENG_ELAPSED_MS
 
   local recorded=true
   record_run_metrics "$raw_log" "$model" || recorded=false
@@ -602,6 +661,23 @@ validate_inputs() {
       done
       if [[ "$has_html" == "false" || "$has_curated" == "false" ]]; then
         echo "Error: no curated content found." >&2
+        # Name the half that failed and the exact glob. A generic message sent a
+        # real run down the wrong path: curate had produced all 38 mockups but
+        # put them in output/mockups/, and "no curated content" gave no hint
+        # that the files existed at all, let alone where the check was looking.
+        [[ "$has_html" == "false" ]] && echo "  missing: output/html/*.html" >&2
+        [[ "$has_curated" == "false" ]] && echo "  missing: output/transcripts/*_curated.txt" >&2
+        # If the outputs exist under another name, say so rather than implying
+        # the work was never done.
+        local stray
+        stray=$(find output -mindepth 2 -name '*.html' -not -path 'output/html/*' 2>/dev/null | head -3)
+        if [[ -n "$stray" ]]; then
+          echo "  Found .html elsewhere under output/ — reveng only reads output/html/:" >&2
+          while IFS= read -r line; do
+            echo "    $line" >&2
+          done <<< "$stray"
+          echo "  Move them to output/html/ (it is gitignored as a regenerable intermediate)." >&2
+        fi
         echo "Run 'reveng curate' first to prepare screenshots and transcripts." >&2
         return 1
       fi

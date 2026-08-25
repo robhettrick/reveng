@@ -61,7 +61,7 @@ With neither validator available the skill exits cleanly with a notice — the r
 
 ### Optional: run cost tracking
 
-Every Claude invocation appends one row to `.reveng/metrics.jsonl` **in the workspace** (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, and token/cache counts. The cost record therefore travels with the analysis it justifies. `reveng init` adds `.reveng/` to the workspace `.gitignore`, so committing it is a deliberate act — un-ignore it when you want the spend figures kept as evidence alongside the PRD. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
+Every Claude invocation appends one row to `.reveng/metrics.jsonl` **in the workspace** (override with `REVENG_METRICS_LOG`) carrying the run id, command, model, cost, duration, turn count, token/cache counts, and the workspace's git branch, short commit and dirty flag. The branch matters because a workspace is often on a per-run branch (`reveng-run-<date>_<model>`), so it is the natural way to attribute spend to an attempt; `dirty` records that uncommitted changes meant the commit alone did not pin the inputs. All three are null where the workspace is not a git repository. The cost record therefore travels with the analysis it justifies. `reveng init` adds `.reveng/` to the workspace `.gitignore`, so committing it is a deliberate act — un-ignore it when you want the spend figures kept as evidence alongside the PRD. Cost comes from Claude Code's own `result` event, so it is already aggregated across every turn and sub-agent — there is no pricing table to keep current.
 
 Each run gets an id of the form `<command>-<model>-<timestamp>` (e.g. `synth-fable-20260821-142233`). Pass `--run-id` to set a stable label when comparing runs:
 
@@ -95,6 +95,7 @@ It plots cost per run, mean cost by command and model, cost per 1k output tokens
 | `REVENG_METRICS_KEEP=<n>` | Retain only the newest `n` rows (default `5000`) |
 | `REVENG_METRICS_LOG=<path>` | Write to one specific file instead of the workspace's `.reveng/metrics.jsonl` — use this to aggregate several engagements into one log |
 | `REVENG_METRICS_DIR=<dir>` | Use a directory other than `.reveng` for the log |
+| `REVENG_BRANCH=<name>` | Label rows with this branch instead of asking git. Useful in a detached CI checkout, or where git cannot read the workspace |
 | `REVENG_WORKSPACE=<name>` | Label rows with this name instead of the current directory's. `reveng sandbox` sets it automatically from the host folder, since the workspace always mounts at `/workspace` inside the container |
 
 The dashboard resolves the same order: `REVENG_METRICS_LOG` if set, else the workspace's `.reveng/metrics.jsonl`, else the pre-0.2 location `~/.config/reveng/metrics/metrics.jsonl` so older logs stay viewable. Run it from the workspace and it finds the right file. To compare engagements, point `REVENG_METRICS_LOG` at a combined file — every row carries `workspace`, so the breakdowns still separate cleanly.
