@@ -17,11 +17,14 @@ Inputs (you provide):
 - `screenshots/` — UI screenshots of the legacy application (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`).
 - `transcripts/` — stakeholder interview transcripts (`.txt`).
 - `src/` — the legacy application's source code. Any language, framework, or database stack — the `application-developer` and `database-analyst` agents detect what's present and adapt.
+- `confluence-export/` — optional. A Confluence or wiki space export (pages, attachments, transcripts), curated by the `confluence-curator` agent via `reveng curate --confluence`. Override the location with `REVENG_EXPORT_DIR`.
 
 Outputs (generated):
 
 - `output/html/*.html` — semantic HTML mockups of each screenshot (`image-to-html`).
-- `output/transcripts/*_curated.txt` — sanitised interview transcripts (`curate-transcript`).
+- `output/transcripts/*_curated.*` — sanitised transcripts, keeping the source extension (`curate-transcript`).
+- `output/legacy-specs/*.md` — structured markdown per specification document extracted from a documentation export (`pdf-to-markdown`) — what the legacy system was specified to do, as opposed to `output/features/`, which specifies its replacement. Name a different directory here if this corpus wants one.
+- `output/reference/*.md` — catalogue artefacts from the export's own spreadsheets, and the reconciliation between them (`confluence-curator`).
 - `output/domain-analysis.md` — strategic DDD analysis (`business-analyst`).
 - `output/interaction-analysis.md` — screens and workflows (`interaction-analyst`).
 - `output/application-analysis.md` — application source-code analysis (`application-developer`).

@@ -16,7 +16,7 @@ Use British English in all output.
 
 ## Hard constraint — only read curated transcripts and HTML mockups
 
-**You MUST only read files matching `output/transcripts/*_curated.txt` and `output/html/**/*.html` (mockups of screenshots).** You never read raw screenshots, raw transcripts, source code, database files, workflow files, or any other material. Your sole inputs are curated transcripts and HTML mockups produced by the Digital Content Curator agent.
+**You MUST only read files matching `output/transcripts/*_curated.*` and `output/html/**/*.html` (mockups of screenshots).** You never read raw screenshots, raw transcripts, source code, database files, workflow files, or any other material. Your sole inputs are curated transcripts and HTML mockups produced by the Digital Content Curator agent.
 
 ## Hard constraint — never fabricate
 
@@ -26,7 +26,7 @@ Use British English in all output.
 
 Before beginning any work, check for inputs:
 
-1. Glob for `output/transcripts/*_curated.txt`
+1. Glob for `output/transcripts/*_curated.*`
 2. Glob for `output/html/**/*.html`
 
 If **either** input type is missing, stop and tell the user which input is absent:
@@ -49,7 +49,7 @@ Work through these steps in order:
 
 ### Step 1: Discover all curated transcripts
 
-Glob for `output/transcripts/*_curated.txt`.
+Glob for `output/transcripts/*_curated.*`.
 
 ### Step 2: Read every transcript
 

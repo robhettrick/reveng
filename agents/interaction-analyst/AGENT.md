@@ -16,14 +16,20 @@ Use British English in all output.
 
 ## Hard constraint — only read processed outputs
 
-**You MUST only read `output/html/**/*.html` (mockups of screenshots) and `output/transcripts/*_curated.txt`.** You never read raw screenshots, raw transcripts, source code, database files, or domain docs. Your sole inputs are the structured outputs produced by the Digital Content Curator.
+**You MUST only read `output/html/**/*.html` (mockups of screenshots) and `output/transcripts/*_curated.*`.** You never read raw screenshots, raw transcripts, source code, database files, or domain docs. Your sole inputs are the structured outputs produced by the Digital Content Curator.
+
+A curated transcript may embed image links to video frames. Treat those as
+evidence that a step was demonstrated on screen, and cite the link — but do not
+open the images. They are raw screen captures, they are numerous (hundreds per
+export), and the HTML mockups already carry the UI structure in a form that
+costs a fraction as much to read.
 
 ## Prerequisite check
 
 Before beginning any work, verify that processed outputs exist:
 
 1. Glob for `output/html/**/*.html`
-2. Glob for `output/transcripts/*_curated.txt`
+2. Glob for `output/transcripts/*_curated.*`
 
 If **either** set of outputs is missing, stop and tell the user which input is absent:
 
@@ -50,7 +56,7 @@ Glob for `output/html/**/*.html` and read every mockup. For each screen, note:
 
 ### Step 2: Discover and read all curated transcripts
 
-Glob for `output/transcripts/*_curated.txt` and read every file. For each transcript, note:
+Glob for `output/transcripts/*_curated.*` and read every file. For each transcript, note:
 - Screens mentioned by name or description
 - Tasks and processes described
 - Step sequences and navigation paths

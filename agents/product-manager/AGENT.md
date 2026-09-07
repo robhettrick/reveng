@@ -42,7 +42,7 @@ Work through these steps in order:
 
 Use Glob to check for curated content:
 - Glob for `output/html/**/*.html`
-- Glob for `output/transcripts/*_curated.txt`
+- Glob for `output/transcripts/*_curated.*`
 
 If **either** input type is missing, **stop** and tell the user which input is absent:
 
