@@ -1,7 +1,7 @@
 ---
-name: pdf-to-markdown
-description: Converts a legacy specification PDF (use case specs, functional specs, requirements documents, reports) into structured markdown, using a deterministic Node extractor for the text and the model only to repair extraction defects. Use this when a PDF's content must be readable by downstream analysis agents without spending image tokens.
-allowed-tools: Read, Write, Bash(mkdir*), Bash(node*), Bash(ls*), Bash(cd*)
+name: curate-specification
+description: Converts a legacy specification into structured markdown — from a pre-extracted draft where one exists, else from the PDF using a bundled deterministic extractor. The model repairs flagged extraction defects, resolves identifiers and namespaces, redacts personal data, and records source-internal contradictions; it does not re-derive structure a script already found. Use this when a specification's content must be readable by downstream analysis agents without spending image tokens.
+allowed-tools: Read, Write, Bash(mkdir*)
 ---
 
 You are converting a legacy specification PDF into structured markdown.
@@ -10,37 +10,54 @@ You are converting a legacy specification PDF into structured markdown.
 
 The PDF file path is: `$ARGUMENTS`
 
-## Why a script does the extraction
+## What is yours to do, and what is not
 
-The text is pulled out by `scripts/pdf-text.mjs`, not by you reading the PDF as
-images. A specification corpus is typically hundreds of documents of a dozen or
-more pages each; rendering them as images would cost more than the rest of the
-pipeline combined. Most specification PDFs — anything produced from a word
-processor rather than a scanner — carry extractable text, so start there.
+A script gets the text out; you make the judgements it cannot. Keeping that line
+clear is the whole point, because the two have wildly different costs.
 
-The scripts need no dependencies (Node built-ins only), so they run wherever
-Node does, including containers with no Python and no PDF tooling installed.
+**Not yours.** Extraction, template identification, section segmentation,
+header and footer removal, and finding defects. All of it is mechanical, and
+where a corpus has been through a deterministic extractor you will be handed a
+draft with that work already done and its defects listed. Redoing any of it
+means holding a whole document in context and reasoning over it turn after turn
+to reach a conclusion a regex already reached.
+
+**Yours.** Four things a script cannot do:
+
+- **Repairing a flagged defect**, where the intended reading takes judgement.
+- **Resolving an identifier**, where a corpus's numbering is not flat and the
+  namespace has to come from a catalogue.
+- **Redacting personal data**, consistently against a corpus-wide mapping.
+- **Noticing a source-internal contradiction** — a rule scoped to one step but
+  attached to another, a flow numbered differently in two places — and
+  preserving both readings rather than quietly picking one.
+
+A draft with no flagged defects may need only the second and third of those. Do
+not manufacture work to fill the others.
 
 ## Steps
 
-1. **Extract the text.** The scripts sit beside this skill file. Your working
-   directory may reset between Bash calls, so resolve an **absolute** path once
-   and reuse it — do not rely on a relative `scripts/` path:
+1. **Read the draft and its manifest entry.**
 
-   ```
-   SKILL_DIR=$(ls -d ~/.claude/skills/pdf-to-markdown .claude/skills/pdf-to-markdown 2>/dev/null | head -1)
-   node "$(cd "$SKILL_DIR" && pwd)/scripts/pdf-text.mjs" "<pdf-path>"
-   ```
+   Your input is a `.md` draft produced by a deterministic extractor, not a PDF.
+   The text is already out, the template is identified in the front matter, the
+   sections are segmented, and the running header and footer are gone. A sibling
+   `manifest.json` lists the defects the extractor found, each with a page
+   number and a sample. Read this document's entry before anything else: it is
+   the list of what needs your attention, and a draft with no defects listed may
+   need only steps 5 and 7.
 
-   Output is one `--- pN ---` block per page.
+   **This skill does not extract PDFs.** If you were handed a PDF rather than a
+   draft, stop and say so — the corpus needs its extractor run first. Do not
+   read the PDF as images, and do not improvise an extraction: text recovered by
+   guesswork is indistinguishable from text recovered correctly, which makes a
+   wrong reading permanent and invisible.
 
-   If it prints no pages, or pages with no text, the PDF is probably scanned
-   images. Stop and report the file as unextractable — do **not** fall back to
-   reading it as images unless the user has explicitly asked for that, and never
-   invent content.
+   The draft's front matter names the source PDF. Open it only to settle a
+   defect the draft cannot settle alone.
 
-   For spreadsheets, `scripts/xlsx-text.mjs` takes the workbook path (listing its
-   sheets) and then a sheet id (`worksheets/sheet1`) to dump that sheet.
+   Catalogue spreadsheets are extracted by the same tooling, into a `sheets/`
+   directory beside the drafts. Read those rather than the workbooks.
 
 2. **Identify the document template.** A long-lived system's specifications
    usually come in more than one generation, with different section sets and
@@ -166,6 +183,9 @@ extraction_warnings: 0
   (`12.1` counts as part of section 12, not as its own).
 - `extraction_warnings` — the number of entries in the Extraction warnings
   section; `0` if there are none.
+- `draft: true` marks a deterministically-extracted draft that has not yet been
+  through this skill. **Drop the key when you convert one**, so a later run can
+  tell a finished conversion from an input awaiting one.
 - `version` — the document version. Prefer the filename and title page: running
   page headers are often stale word-processor fields and can disagree with the
   document's actual version and status. Record any such conflict as a warning.
@@ -224,3 +244,6 @@ warnings section is fine and preferable to a silent repair.
   do the interpreting; your output must preserve what the specification says,
   including detail that looks redundant.
 - **Do not read the PDF as images.** The extractor is the supported route.
+- **Do not re-extract what is already extracted.** If you were handed a draft,
+  the source PDF is for resolving a defect you cannot settle from the draft —
+  not a second opinion on text a script has already read correctly.

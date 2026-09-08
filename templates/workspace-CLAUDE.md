@@ -23,7 +23,7 @@ Outputs (generated):
 
 - `output/html/*.html` — semantic HTML mockups of each screenshot (`image-to-html`).
 - `output/transcripts/*_curated.*` — sanitised transcripts, keeping the source extension (`curate-transcript`).
-- `output/legacy-specs/*.md` — structured markdown per specification document extracted from a documentation export (`pdf-to-markdown`) — what the legacy system was specified to do, as opposed to `output/features/`, which specifies its replacement. Name a different directory here if this corpus wants one.
+- `output/legacy-specs/*.md` — structured markdown per specification document extracted from a documentation export (`curate-specification`) — what the legacy system was specified to do, as opposed to `output/features/`, which specifies its replacement. Name a different directory here if this corpus wants one.
 - `output/reference/*.md` — catalogue artefacts from the export's own spreadsheets, and the reconciliation between them (`confluence-curator`).
 - `output/domain-analysis.md` — strategic DDD analysis (`business-analyst`).
 - `output/interaction-analysis.md` — screens and workflows (`interaction-analyst`).

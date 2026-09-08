@@ -290,7 +290,7 @@ Place your raw material in the reveng workspace (the directory where you ran `re
 |------|------------|-------------|
 | `output/html/*.html` | `image-to-html` | Semantic HTML mockup of each screenshot |
 | `output/transcripts/*_curated.*` | `curate-transcript` | Transcripts with off-topic content removed, keeping the source extension (intermediate) |
-| `output/legacy-specs/*.md` | `pdf-to-markdown` | Structured markdown per specification document extracted from a documentation export — what the legacy system was *specified* to do. Distinct from `output/features/`, which specifies its replacement. The workspace `CLAUDE.md` may name a different directory for a given corpus |
+| `output/legacy-specs/*.md` | `curate-specification` | Structured markdown per specification document extracted from a documentation export — what the legacy system was *specified* to do. Distinct from `output/features/`, which specifies its replacement. The workspace `CLAUDE.md` may name a different directory for a given corpus |
 | `output/reference/*.md` | `confluence-curator` | Catalogue artefacts converted from the export's own spreadsheets — a document index, a roles or permissions matrix — plus the reconciliation between them. Built before any specification, since they resolve identifiers and which documents are live |
 | `output/domain-analysis.md` | `business-analyst` | Comprehensive domain analysis (ubiquitous language, bounded contexts, subdomains, context map) extracted from curated transcripts and HTML mockups |
 | `output/interaction-analysis.md` | `interaction-analyst` | Comprehensive interaction analysis (screen inventory, user workflows with mermaid diagrams, screen navigation map) stitched from HTML mockups and curated transcripts |
@@ -357,7 +357,7 @@ graph LR
 | `image-to-html` | Converts a legacy UI screenshot into semantic, unstyled mockup HTML |
 | `curate-transcript` | Removes off-topic content from interview transcripts |
 | `validate-mermaid` | Validates all Mermaid diagram blocks in a markdown file and fixes broken diagrams in place |
-| `pdf-to-markdown` | Converts a legacy specification PDF into structured markdown, using a deterministic Node extractor for the text and the model only to repair extraction defects. Also carries an xlsx extractor for catalogue spreadsheets. Needs no dependencies beyond Node |
+| `curate-specification` | Turns a legacy specification into analysis-ready markdown: repairs flagged extraction defects, resolves identifiers and namespaces, redacts personal data, and records source-internal contradictions. Works from a pre-extracted draft produced by the export tooling; it does no extraction of its own |
 
 ## Agents
 

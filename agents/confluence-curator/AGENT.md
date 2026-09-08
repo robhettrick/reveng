@@ -5,9 +5,9 @@ description: >
   Use this agent to triage a documentation export by evidence class and convert
   specification PDFs, wiki pages, diagrams and spreadsheets into structured
   markdown, readying them for downstream analysis.
-tools: Glob, Grep, Read, Write, Task, Bash(mkdir*), Bash(node*), Bash(md5sum*), Bash(shasum*), Bash(ls*), Bash(cd*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*), Skill
+tools: Glob, Grep, Read, Write, Task, Bash(mkdir*), Bash(md5sum*), Bash(shasum*), Bash(ls*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*), Skill
 skills:
-  - pdf-to-markdown
+  - curate-specification
   - curate-transcript
 memory: project
 ---
@@ -63,7 +63,7 @@ If Phase A found no catalogue artefacts, **build them now**, before converting a
 single specification. The export's own catalogue spreadsheets are the input:
 a list or index of documents, a roles or permissions matrix, an identifier map.
 Classify them as `reference-spreadsheet` (Phase D), convert them with
-`xlsx-text.mjs`, and write them to `output/reference/`.
+the export tooling's `sheets/` output, and write them to `output/reference/`.
 
 This ordering is not a preference. A catalogue resolves things no individual
 document can:
@@ -118,8 +118,8 @@ common ones; add a class if this export holds something they do not cover.
 
 | Class | What it is | Action |
 |---|---|---|
-| `specification` | Numbered functional / use-case / requirements specs | `pdf-to-markdown` skill, via subagent; one markdown file per document |
-| `reference-spreadsheet` | `.xlsx` / `.xls` / `.xlsm` catalogues, matrices, indexes | Convert with the `pdf-to-markdown` skill's `xlsx-text.mjs`; write to `output/reference/` |
+| `specification` | Numbered functional / use-case / requirements specs | `curate-specification` skill, via subagent; one markdown file per document |
+| `reference-spreadsheet` | `.xlsx` / `.xls` / `.xlsm` catalogues, matrices, indexes | Already extracted to `sheets/` beside the drafts; read those and write the reconciliation to `output/reference/` |
 | `wiki-page` | The export's own `pages/*.md` | Strip wiki chrome, keep front matter |
 | `data-model-diagram` | Entity-relationship and logical data model diagrams | Describe via subagent; do not treat as a UI screenshot |
 | `process-diagram` | Business process / context models, often many revisions | Keep the latest revision only; describe that one |
@@ -159,6 +159,32 @@ them. A resumed run depends entirely on this being right. The `reference-spreads
 point — Phase B converted it — so what remains here is specifications,
 diagrams, wiki pages and transcripts.
 
+#### Prefer a pre-extracted draft over the source PDF
+
+**Before converting anything, look for drafts the export's own tooling has
+already produced** — commonly an `extracted/` directory beside the export,
+carrying one structured markdown draft per specification under `drafts/`, the
+export's catalogue spreadsheets under `sheets/`, and a `manifest.json`.
+The workspace `CLAUDE.md` says whether this corpus has them and where.
+
+Where they exist, dispatch the **draft**, not the PDF. This is not a small
+optimisation. A subagent given a raw PDF has to extract the text, work out which
+template the document uses, find the section boundaries, and discover every
+spacing defect by reading — turn after turn, re-reading its whole context each
+time. Given a draft it starts from a segmented document whose defects are
+already listed, and only repairs what is flagged. Measured on one corpus, the
+raw-PDF route cost roughly two million cache-read tokens per specification;
+almost all of that was discovery, not repair.
+
+So the split is: the deterministic tool finds, the model judges. Do not ask a
+subagent to redo work the manifest already contains.
+
+Read the manifest first. It tells you which documents have defects worth a
+model's attention, which matched no known template, and which yielded no
+sections — and those three groups are where the judgement is needed. A draft
+with zero defects and a full section count may need only a check, not a
+conversion.
+
 For **specifications and diagrams**, launch a Task subagent per file so the
 extracted text and any images stay out of your context. Launch them in parallel,
 in batches of at most 10 per response:
@@ -166,9 +192,13 @@ in batches of at most 10 per response:
 ```
 Task(
   subagent_type="general-purpose",
-  prompt="Use the Skill tool to invoke the pdf-to-markdown skill with argument: <export>/attachments/<page-id>/<file>.pdf"
+  prompt="Use the Skill tool to invoke the curate-specification skill with argument: <export>/extracted/drafts/<id>.md (a pre-extracted draft; its source PDF is named in its front matter)"
 )
 ```
+
+If no drafts exist, dispatch the source PDF instead and say so in your report —
+a corpus converted the expensive way is worth knowing about, because running the
+extractor first would have been cheaper.
 
 **State the output directory in the prompt whenever it is not the skill's
 default.** A subagent is a separate context: it reads the skill, not your
@@ -179,7 +209,7 @@ skill's default — and name it in every dispatch:
 ```
 Task(
   subagent_type="general-purpose",
-  prompt="Use the Skill tool to invoke the pdf-to-markdown skill with argument: <path>. Write the output to output/<dir>/ per this workspace's CLAUDE.md."
+  prompt="Use the Skill tool to invoke the curate-specification skill with argument: <path>. Write the output to output/<dir>/ per this workspace's CLAUDE.md."
 )
 ```
 
@@ -197,7 +227,7 @@ For **wiki pages and spreadsheets**, do the work yourself; no subagent needed.
 
 Wait for each batch to return before launching the next.
 
-**If `Skill(pdf-to-markdown)` reports an unknown skill**, the session's skill
+**If `Skill(curate-specification)` reports an unknown skill**, the session's skill
 list predates the skill's installation. Tell the user to restart the session
 rather than working around it — a subagent that falls back to reading `SKILL.md`
 by hand will drift from the instructions.
@@ -268,6 +298,8 @@ readable without opening the file:
 6. **Anything the export itself is missing** — identifiers referenced by
    converted documents but absent from the export. These are open questions for
    the downstream analysts, and are easily lost if you do not record them here.
+7. **Whether you worked from pre-extracted drafts or raw PDFs**, and any
+   identity you added to the redaction mapping.
 
 **Report only what this run did.** On a resumed run, say how many documents were
 already present and skipped, and do not restate the previous run's conversions
@@ -279,13 +311,22 @@ as your own — the file's earlier sections carry those.
   class — a partial run that looks complete is worse than an obvious failure.
 - **Never fabricate.** If a file cannot be converted, record it as failed. Do not
   write a plausible-looking output from the filename.
-- **Never read a PDF as images.** `pdf-to-markdown` extracts text
-  deterministically; rendering hundreds of specifications as images would cost
-  more than the whole pipeline.
+- **Never read a PDF as images**, and never improvise an extraction. Extraction
+  is done beforehand by the export tooling; if a document has no draft, say so
+  rather than recovering its text by guesswork. Text recovered by guesswork is
+  indistinguishable from text recovered correctly, which makes a wrong reading
+  permanent and invisible.
+- **A pre-extracted draft is faithful, not sanitised.** Deterministic extraction
+  reproduces what the source says, including the revision history naming its
+  authors. Redaction needs one mapping applied across the whole corpus, so the
+  same person is the same pseudonym in every document — a per-document decision
+  cannot achieve that. Apply the corpus's mapping (the workspace `CLAUDE.md`
+  says where it lives), extend it when you meet an identity it does not carry,
+  and record what you added. Never mint a pseudonym without recording it.
 - **Preserve identifiers exactly.** Identifier schemes carry more structure than
   they appear to: letter suffixes usually mark a genuinely different document,
   and a bracketed second number usually records a renumbering. Carry both forms
   when the source does, and never normalise or zero-pad away a distinction.
 - **Carry a namespace when the identifier space is not flat.** See the
-  `pdf-to-markdown` skill.
+  `curate-specification` skill.
 - If a class is empty (no files, or all already converted), say so and move on.
