@@ -296,7 +296,8 @@ Place your raw material in the reveng workspace (the directory where you ran `re
 | `output/interaction-analysis.md` | `interaction-analyst` | Comprehensive interaction analysis (screen inventory, user workflows with mermaid diagrams, screen navigation map) stitched from HTML mockups and curated transcripts |
 | `output/application-analysis.md` | `application-developer` | Comprehensive application analysis (workflows, behaviours, domain model, business rules, reports) extracted from source code |
 | `output/database-analysis.md` | `database-analyst` | Comprehensive database analysis (schema, stored procedures, triggers, constraints, database-level business rules) extracted from SQL and source code |
-| `output/PRD.md` | `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
+| `output/PRD.md` | `open-question-resolver` | Answers the open questions an analysis raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary: inside, it imports the answer marked by source; outside, it records only that documents exist and what they cover — so the analyses are resolved rather than widened |
+| `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
 | `output/features/FT-XXX-*.md` | `prd-to-features` agent | Individual feature specifications decomposed from the PRD, each with user stories, wireframes, and acceptance criteria |
 
 ### Output management

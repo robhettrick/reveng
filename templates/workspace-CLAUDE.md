@@ -25,6 +25,7 @@ Outputs (generated):
 - `output/transcripts/*_curated.*` — sanitised transcripts, keeping the source extension (`curate-transcript`).
 - `output/legacy-specs/*.md` — structured markdown per specification document extracted from a documentation export (`curate-specification`) — what the legacy system was specified to do, as opposed to `output/features/`, which specifies its replacement. Name a different directory here if this corpus wants one.
 - `output/reference/*.md` — catalogue artefacts from the export's own spreadsheets, and the reconciliation between them (`confluence-curator`).
+- `output/reference/redaction-map.md` — the corpus's pseudonym mapping: one row per real identity, listing every form it appears in and the pseudonym replacing it. Agents that redact read it before inventing a pseudonym and append to it when they meet an identity it does not carry, so one person is one pseudonym across the whole corpus. **Add it to `.gitignore`** — it is the one file that deliberately concentrates real values, and committing it would defeat the redaction it enables.
 - `output/domain-analysis.md` — strategic DDD analysis (`business-analyst`).
 - `output/interaction-analysis.md` — screens and workflows (`interaction-analyst`).
 - `output/application-analysis.md` — application source-code analysis (`application-developer`).

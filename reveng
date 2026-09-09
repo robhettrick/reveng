@@ -36,6 +36,7 @@ CURATE_DEFAULT_EFFORT="high"
 CURATE_CONFLUENCE_DEFAULT_EFFORT="xhigh"
 SYNTH_ANALYSIS_DEFAULT_EFFORT="xhigh"
 SYNTH_PRD_DEFAULT_EFFORT="max"
+RESOLVE_DEFAULT_EFFORT="xhigh"
 DECOMPOSE_DEFAULT_EFFORT="xhigh"
 
 # Effort levels Claude Code accepts. An unknown value is only a warning there,
@@ -51,6 +52,7 @@ Usage: reveng <command> [options]
 Commands:
   curate       Prepare screenshots and transcripts for analysis
   synth        Run analysis agents and produce the PRD
+  resolve      Answer the analyses' open questions from a second corpus
   decompose    Decompose the PRD into feature specifications
   sandbox      Start a devcontainer for the current project
   init         Scaffold directory structure and .gitignore
@@ -368,6 +370,29 @@ record_failed_run() {
       models_used: null }' >> "$out" 2>/dev/null || true
 }
 
+# `claude` is invoked as a bare command, so it must be on PATH. When it is not,
+# the failure surfaces 70 lines later as "command not found" inside a pipeline,
+# with the exit status attributed to the run rather than the setup. Check first
+# and say what is wrong.
+check_claude_available() {
+  if command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Error: 'claude' is not on PATH." >&2
+  echo >&2
+  echo "reveng invokes the Claude Code CLI directly. Common causes:" >&2
+  echo "  - it is managed by a version manager (mise, asdf, nvm) whose shims" >&2
+  echo "    are added by an interactive shell profile that this run does not load" >&2
+  echo "  - it is installed for a different user than the one running reveng" >&2
+  echo "  - in a container, it is at /usr/local/share/npm-global/bin, which is" >&2
+  echo "    added to PATH by the image; check PATH survived however reveng was" >&2
+  echo "    invoked" >&2
+  echo >&2
+  echo "Set CLAUDE_BIN to an absolute path to override, e.g." >&2
+  echo "  CLAUDE_BIN=\$(command -v claude) reveng curate --confluence" >&2
+  return 1
+}
+
 run_claude() {
   local prompt="$1"
   local model="$2"
@@ -380,6 +405,13 @@ run_claude() {
   export REVENG_EFFORT
 
   check_workspace_initialised
+  local claude_bin="${CLAUDE_BIN:-claude}"
+  if [[ "$claude_bin" == "claude" ]]; then
+    check_claude_available || return 1
+  elif [[ ! -x "$claude_bin" ]]; then
+    echo "Error: CLAUDE_BIN is set to '$claude_bin', which is not executable." >&2
+    return 1
+  fi
 
   # Analyst runs on a large source tree routinely exceed Claude Code's default
   # background-task ceiling (600s), which terminates the agent mid-write and
@@ -394,7 +426,7 @@ run_claude() {
   export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-10800000}"
 
   local cmd=(
-    claude -p "$prompt"
+    "$claude_bin" -p "$prompt"
     --dangerously-skip-permissions
     --output-format stream-json
     --verbose
@@ -815,6 +847,18 @@ validate_inputs() {
         return 1
       fi
       ;;
+    resolve)
+      local missing=""
+      for a in domain application interaction database; do
+        [[ -f "output/$a-analysis.md" ]] || missing+="  missing: output/$a-analysis.md"$'\n'
+      done
+      if [[ -n "$missing" ]]; then
+        echo "Error: resolve answers questions the analyses raise, so it needs them first." >&2
+        printf '%s' "$missing" >&2
+        echo "Run 'reveng synth --analyses-only' to produce them." >&2
+        return 1
+      fi
+      ;;
     decompose)
       if [[ ! -f "output/PRD.md" ]]; then
         echo "Error: output/PRD.md not found." >&2
@@ -1048,6 +1092,7 @@ Adds to .gitignore:
   .reveng/
   output/html/
   output/transcripts/*_curated.*
+  output/reference/redaction-map.md
 
 Existing files at the destination are skipped (with a warning), so
 local edits to agents, skills, or CLAUDE.md are preserved. To refresh,
@@ -1086,7 +1131,10 @@ EOF
   # .reveng/ holds the run-cost log. Ignored by default so cost data is never
   # committed by accident; un-ignore it deliberately to keep the cost record
   # with the analysis (e.g. as evidence in a business case).
-  local gitignore_entries=(".claude/" ".reveng/" "output/html/" "output/transcripts/*_curated.*")
+  # The redaction map concentrates real personal values by design, so that one
+  # identity maps to one pseudonym corpus-wide. Committing it would defeat the
+  # redaction it enables, and history is far harder to clean than a file.
+  local gitignore_entries=(".claude/" ".reveng/" "output/html/" "output/transcripts/*_curated.*" "output/reference/redaction-map.md")
   local touched=false
   # A .gitignore whose last line has no trailing newline would otherwise get the
   # first new entry concatenated onto it, silently corrupting both rules (e.g.
@@ -1232,7 +1280,7 @@ EOF
   echo "▸ Synthesising PRD"
   REVENG_PHASE="/synth/prd"
   run_claude \
-    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them." \
+    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them. If output/open-question-answers.md exists, read it too and apply the subordination rules in your agent definition; if it does not, that is normal and not an error." \
     "$MODEL" \
     "$VERBOSE" \
     "$DRY_RUN" \
@@ -1387,6 +1435,50 @@ cmd_synth_analyses() {
   # that tests false made this return 1 on every fresh workspace — after
   # running all four analysts — aborting synth before the PRD with no message.
   return 0
+}
+
+cmd_resolve() {
+  parse_flags "$SYNTH_DEFAULT_MODEL" "$RESOLVE_DEFAULT_EFFORT" "$RESOLVE_DEFAULT_EFFORT" -- "$@"
+
+  if [[ "$SHOW_HELP" == "true" ]]; then
+    cat <<'EOF'
+Usage: reveng resolve [options]
+
+Runs the open-question-resolver agent over the four analyses, answering their
+open questions from a second corpus the analysts were not permitted to read.
+Writes output/open-question-answers.md and never edits an analysis.
+
+The workspace CLAUDE.md must say what that second corpus is, where it lives,
+and where the boundary of the analysed corpus falls — the agent classifies
+each question as inside or outside that boundary, and imports content only
+for the questions inside it. Without that guidance there is nothing to run
+against.
+
+Skip this step in a workspace that has only one corpus.
+
+Options:
+  -m, --model MODEL   Claude model to use (default: opus)
+  -e, --effort LEVEL   Reasoning effort: low, medium, high, xhigh, max
+                       (default: xhigh)
+  -v, --verbose        Show Claude commands and raw output
+  --dry-run            Print what would be executed without running
+  --run-id ID          Label this run in the metrics log
+  -h, --help           Show this help message
+EOF
+    return 0
+  fi
+
+  validate_inputs resolve
+  init_run_id "resolve" "$MODEL"
+
+  echo "▸ Resolving open questions"
+  REVENG_PHASE="/resolve"
+  run_claude \
+    "Run the \`open-question-resolver\` agent. The four analysis files exist in output/; read the workspace CLAUDE.md for what the second corpus is and where the analysed corpus ends." \
+    "$MODEL" \
+    "$VERBOSE" \
+    "$DRY_RUN" \
+    "$EFFORT"
 }
 
 cmd_decompose() {
@@ -1616,6 +1708,7 @@ EOF
 case "${1:-}" in
   curate)      shift; cmd_curate "$@" ;;
   synth)       shift; cmd_synth "$@" ;;
+  resolve)     shift; cmd_resolve "$@" ;;
   decompose)   shift; cmd_decompose "$@" ;;
   sandbox)     shift; cmd_sandbox "$@" ;;
   init)        shift; cmd_init "$@" ;;
