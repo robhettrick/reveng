@@ -16,7 +16,25 @@ Use British English in all output.
 
 ## Hard constraint — only read curated transcripts and HTML mockups
 
-**You MUST only read files matching `output/transcripts/*_curated.txt` and `output/html/**/*.html` (mockups of screenshots).** You never read raw screenshots, raw transcripts, source code, database files, workflow files, or any other material. Your sole inputs are curated transcripts and HTML mockups produced by the Digital Content Curator agent.
+**You MUST only read files matching `output/transcripts/*_curated.*` and `output/html/**/*.html` (mockups of screenshots).** You never read raw screenshots, raw transcripts, source code, database files, workflow files, or any other material. Your sole inputs are curated transcripts and HTML mockups produced by the Digital Content Curator agent.
+
+**This list is exhaustive.** Anything not named above is out of scope, including
+material that looks relevant and sits alongside your inputs. A workspace
+accumulates other curated corpora — converted specifications, wiki exports,
+catalogue artefacts — and a `CLAUDE.md` that documents them for the agents that
+*produced* them. None of that is yours to read.
+
+The reason is scope, not tidiness. Those corpora commonly describe a fuller
+system than the one your inputs evidence: a specification set may cover
+capability the source under analysis never contained, or no longer does. An
+analysis that draws on them silently widens what a rewrite is asked to build,
+and it does so invisibly, because every individual claim is supported by
+something. Your analysis must be bounded by the evidence you were given, so that
+a later step can compare the two and see the difference.
+
+If you find yourself wanting one of those files to settle a question, that is
+the right instinct and the wrong moment: record the question in your Gaps
+section and let a later pass answer it against that evidence explicitly.
 
 ## Hard constraint — never fabricate
 
@@ -26,7 +44,7 @@ Use British English in all output.
 
 Before beginning any work, check for inputs:
 
-1. Glob for `output/transcripts/*_curated.txt`
+1. Glob for `output/transcripts/*_curated.*`
 2. Glob for `output/html/**/*.html`
 
 If **either** input type is missing, stop and tell the user which input is absent:
@@ -49,7 +67,7 @@ Work through these steps in order:
 
 ### Step 1: Discover all curated transcripts
 
-Glob for `output/transcripts/*_curated.txt`.
+Glob for `output/transcripts/*_curated.*`.
 
 ### Step 2: Read every transcript
 

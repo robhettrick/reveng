@@ -24,7 +24,39 @@ Use British English in all output.
 - `output/application-analysis.md`
 - `output/database-analysis.md`
 
+Plus one optional fifth file, **if it exists**:
+
+- `output/open-question-answers.md`
+
 **Never read raw sources** (`src/`, `transcripts/`, `screenshots/`, `docs/`, `feedback/`). Your sole inputs are the analysis files produced by the specialist agents.
+
+### The fifth file is subordinate, and stays that way
+
+When `output/open-question-answers.md` exists, a second corpus has answered some
+of what the analysts could not. It is not a fifth analysis. Every entry in it
+attaches to an Open Question one of the four raised, and it carries answers the
+four could not have reached.
+
+So it may **resolve or qualify** something the four already establish. It may
+never **originate** a requirement, a domain term, an entity, a workflow step or a
+non-functional constraint. If a claim in the PRD would rest on that file alone,
+it does not belong in the PRD — an Open Question it answers becomes an answered
+Open Question, not a new requirement.
+
+Two rules follow:
+
+- **Mark what came from it.** An answer sourced there is evidence of a different
+  kind — typically what a system was specified to do, rather than what the
+  analysed source shows it does. Cite it as such, so a reader can tell the two
+  apart without opening it.
+- **Where it contradicts an analysis, the analysis wins on behaviour**, and you
+  record the contradiction rather than resolving it. The analyses describe the
+  system as it is; that file often describes intent, at a date, which may never
+  have been built.
+
+Its *Capability outside the analysed scope* section is *not* input to the PRD. It
+exists to tell a reader what the wider system contains, and pulling it in would
+widen the rewrite to capability nothing analysed. Leave it alone.
 
 ## Hard constraint — synthesis only
 
@@ -42,7 +74,7 @@ Work through these steps in order:
 
 Use Glob to check for curated content:
 - Glob for `output/html/**/*.html`
-- Glob for `output/transcripts/*_curated.txt`
+- Glob for `output/transcripts/*_curated.*`
 
 If **either** input type is missing, **stop** and tell the user which input is absent:
 
@@ -66,6 +98,10 @@ Attempt to Read all four analysis files:
 - `output/database-analysis.md`
 
 All four analysis files must exist before proceeding. If any are missing, stop and report to the user which files are absent and which agents failed.
+
+Then check for `output/open-question-answers.md` and read it if present. Its
+absence is normal — it exists only where a workspace has a second corpus — so do
+not treat a missing file as an error or mention it in the PRD.
 
 ### Step 4: Note anything the analyses leave unresolved
 

@@ -182,9 +182,10 @@ All `reveng` commands run headlessly — they invoke Claude Code in `--dangerous
 |---------|---------|
 | `reveng init` | Scaffold `screenshots/`, `transcripts/`, `src/`, `output/`; copy reveng's agents, skills, and a workspace `CLAUDE.md` into the current directory; update `.gitignore` |
 | `reveng sandbox` | Start or attach to a devcontainer for the current project (supports `--rebuild` and `clean` subcommand) |
-| `reveng curate` | Run the `digital-content-curator` agent to prepare screenshots and transcripts for analysis (default model: `opus`) |
-| `reveng synth` | Run the `product-manager` agent to produce `output/PRD.md` from curated content (default model: `opus`) |
-| `reveng decompose` | Run the `prd-to-features` agent to decompose `output/PRD.md` into `output/features/FT-*.md` (default model: `opus`) |
+| `reveng curate` | Run the `digital-content-curator` agent to prepare screenshots and transcripts for analysis (default model: `opus`, effort: `high`) |
+| `reveng curate --confluence` | Run the `confluence-curator` agent to triage and convert a Confluence/wiki export under `confluence-export/` (default model: `opus`, effort: `xhigh`) |
+| `reveng synth` | Run the `product-manager` agent to produce `output/PRD.md` from curated content (default model: `opus`; effort: `xhigh` analysts, `max` PRD) |
+| `reveng decompose` | Run the `prd-to-features` agent to decompose `output/PRD.md` into `output/features/FT-*.md` (default model: `opus`, effort: `xhigh`) |
 | `reveng version` | Print the CLI version and exit |
 | `reveng help` | Print usage information |
 
@@ -208,7 +209,7 @@ Each stage validates its inputs before invoking Claude and points the user at th
 | Command | Requires |
 |---------|----------|
 | `curate` | At least one file in `screenshots/` or `transcripts/` |
-| `synth` | At least one `output/html/*.html` and one `output/transcripts/*_curated.txt` (run `reveng curate` first) |
+| `synth` | At least one `output/html/*.html` and one `output/transcripts/*_curated.*` (run `reveng curate` first) |
 | `decompose` | `output/PRD.md` exists (run `reveng synth` first) |
 
 ### `reveng sandbox` workflow
@@ -288,12 +289,15 @@ Place your raw material in the reveng workspace (the directory where you ran `re
 | Path | Produced by | Description |
 |------|------------|-------------|
 | `output/html/*.html` | `image-to-html` | Semantic HTML mockup of each screenshot |
-| `output/transcripts/*_curated.txt` | `curate-transcript` | Interview transcripts with off-topic content removed (intermediate) |
+| `output/transcripts/*_curated.*` | `curate-transcript` | Transcripts with off-topic content removed, keeping the source extension (intermediate) |
+| `output/legacy-specs/*.md` | `curate-specification` | Structured markdown per specification document extracted from a documentation export — what the legacy system was *specified* to do. Distinct from `output/features/`, which specifies its replacement. The workspace `CLAUDE.md` may name a different directory for a given corpus |
+| `output/reference/*.md` | `confluence-curator` | Catalogue artefacts converted from the export's own spreadsheets — a document index, a roles or permissions matrix — plus the reconciliation between them. Built before any specification, since they resolve identifiers and which documents are live |
 | `output/domain-analysis.md` | `business-analyst` | Comprehensive domain analysis (ubiquitous language, bounded contexts, subdomains, context map) extracted from curated transcripts and HTML mockups |
 | `output/interaction-analysis.md` | `interaction-analyst` | Comprehensive interaction analysis (screen inventory, user workflows with mermaid diagrams, screen navigation map) stitched from HTML mockups and curated transcripts |
 | `output/application-analysis.md` | `application-developer` | Comprehensive application analysis (workflows, behaviours, domain model, business rules, reports) extracted from source code |
 | `output/database-analysis.md` | `database-analyst` | Comprehensive database analysis (schema, stored procedures, triggers, constraints, database-level business rules) extracted from SQL and source code |
-| `output/PRD.md` | `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
+| `output/PRD.md` | `open-question-resolver` | Answers the open questions an analysis raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary: inside, it imports the answer marked by source; outside, it records only that documents exist and what they cover — so the analyses are resolved rather than widened |
+| `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
 | `output/features/FT-XXX-*.md` | `prd-to-features` agent | Individual feature specifications decomposed from the PRD, each with user stories, wireframes, and acceptance criteria |
 
 ### Output management
@@ -305,7 +309,7 @@ Generated outputs are regeneratable artefacts. Recommended version-control appro
 - `output/features/FT-*.md` — individual feature specifications
 - `output/domain-analysis.md`, `output/interaction-analysis.md`, `output/application-analysis.md`, `output/database-analysis.md` — the four analysis files
 
-**Don't commit:** `output/html/` and `output/transcripts/*_curated.txt` are intermediate regeneratable outputs. `reveng init` adds them to `.gitignore` for you.
+**Don't commit:** `output/html/` and `output/transcripts/*_curated.*` are intermediate regeneratable outputs. `reveng init` adds them to `.gitignore` for you.
 
 ## Component Map
 
@@ -354,12 +358,14 @@ graph LR
 | `image-to-html` | Converts a legacy UI screenshot into semantic, unstyled mockup HTML |
 | `curate-transcript` | Removes off-topic content from interview transcripts |
 | `validate-mermaid` | Validates all Mermaid diagram blocks in a markdown file and fixes broken diagrams in place |
+| `curate-specification` | Turns a legacy specification into analysis-ready markdown: repairs flagged extraction defects, resolves identifiers and namespaces, redacts personal data, and records source-internal contradictions. Works from a pre-extracted draft produced by the export tooling; it does no extraction of its own |
 
 ## Agents
 
 | Agent | Description |
 |-------|-------------|
 | `digital-content-curator` | Prepares raw screenshots and interview transcripts into structured, analysis-ready outputs (HTML mockups, curated transcripts) |
+| `confluence-curator` | Triages a Confluence or wiki export by evidence class and converts specification PDFs, catalogue spreadsheets, diagrams, wiki pages and transcripts into structured markdown. Builds the export's catalogues first, so identifiers and superseded documents are resolved before any specification is converted |
 | `business-analyst` | Extracts strategic DDD patterns (ubiquitous language, bounded contexts, subdomains, context map) from curated transcripts and HTML mockups for PRD generation |
 | `interaction-analyst` | Stitches HTML mockups with curated interview transcripts to produce comprehensive interaction analysis (screen inventory, user workflows, screen navigation map) for PRD generation |
 | `application-developer` | Comprehensively reads legacy application source code under `src/` to extract workflows, behaviours, domain model, business rules, and reports for PRD generation. Detects the stack and adapts to it |
@@ -382,7 +388,7 @@ flowchart TB
         i2h{{image-to-html}}
         ct{{curate-transcript}}
         html(["output/html/*.html"])
-        curated(["output/transcripts/*_curated.txt"])
+        curated(["output/transcripts/*_curated.*"])
 
         i2h --> html
         ct --> curated
