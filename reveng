@@ -19,6 +19,30 @@ CURATE_DEFAULT_MODEL="opus"
 SYNTH_DEFAULT_MODEL="opus"
 DECOMPOSE_DEFAULT_MODEL="opus"
 
+# Default reasoning effort per command. Effort scales thinking depth and
+# tool-call depth without changing the model, and the return on raising it is a
+# property of the workload, not a constant — so these differ by command rather
+# than sharing one value.
+#
+# Set any of these to "" to pass no --effort flag and inherit whatever the
+# harness defaults to. Override per run with --effort (which sets both synth
+# phases), or --analysis-effort / --prd-effort to set one phase.
+CURATE_DEFAULT_EFFORT="high"
+# The documentation-export path is not the same workload as the screenshot path.
+# It opens by reading the export's catalogue spreadsheets and reconciling them
+# against each other and the file set — judgement work whose result every later
+# conversion inherits, since it decides namespaces and which documents are live.
+# A mistake there is corpus-wide, so it starts a notch higher.
+CURATE_CONFLUENCE_DEFAULT_EFFORT="xhigh"
+SYNTH_ANALYSIS_DEFAULT_EFFORT="xhigh"
+SYNTH_PRD_DEFAULT_EFFORT="max"
+RESOLVE_DEFAULT_EFFORT="xhigh"
+DECOMPOSE_DEFAULT_EFFORT="xhigh"
+
+# Effort levels Claude Code accepts. An unknown value is only a warning there,
+# so a typo would silently run at the default; reveng rejects it instead.
+VALID_EFFORTS="low medium high xhigh max"
+
 # ── Usage ────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -28,6 +52,7 @@ Usage: reveng <command> [options]
 Commands:
   curate       Prepare screenshots and transcripts for analysis
   synth        Run analysis agents and produce the PRD
+  resolve      Answer the analyses' open questions from a second corpus
   decompose    Decompose the PRD into feature specifications
   sandbox      Start a devcontainer for the current project
   init         Scaffold directory structure and .gitignore
@@ -36,6 +61,8 @@ Commands:
 
 Global options (for commands that invoke Claude):
   -m, --model MODEL   Claude model to use (default varies by command)
+  -e, --effort LEVEL   Reasoning effort: low, medium, high, xhigh, max
+                       (default varies by command)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
   --run-id ID          Label this run in the metrics log (default:
@@ -79,13 +106,18 @@ check_workspace_initialised() {
 }
 
 stream_progress() {
+  # Effort is not carried in Claude's init event, so it is passed in rather than
+  # read from the stream. Empty means no --effort was sent and the harness
+  # default applies, which is reported as "default" rather than guessed at.
+  local effort="${1:-}"
   # -R + fromjson? so a non-JSON line (e.g. a warning on Claude's stderr) is
   # skipped rather than aborting the progress display mid-run.
-  jq -rR --unbuffered '
+  jq -rR --unbuffered --arg effort "$effort" '
     def shorten($n): if length > $n then .[:$n-1] + "…" else . end;
     fromjson? | objects |
     if .type == "system" and .subtype == "init" then
-      "▸ Starting Claude session (model: " + (.model // "?") + ")"
+      "▸ Starting Claude session (model: " + (.model // "?")
+        + ", effort: " + (if $effort == "" then "default" else $effort end) + ")"
     elif .type == "assistant" then
       (.message.content // [])[]? |
       if .type == "text" then
@@ -227,12 +259,14 @@ record_run_metrics() {
         --arg branch "${REVENG_BRANCH:-}" \
         --arg commit "${REVENG_COMMIT:-}" \
         --arg dirty "${REVENG_DIRTY:-}" \
+        --arg effort "${REVENG_EFFORT:-}" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg elapsed "${REVENG_ELAPSED_MS:-}" '
     [ inputs | fromjson? | objects | select(.type == "result") ]
     | (map(select(.duration_ms != null)) | max_by(.duration_ms)) // last
     | select(. != null) | {
       ts: $ts, run_id: $run_id, command: $command, model: $model,
+      effort: (if $effort == "" then null else $effort end),
       phase: $phase, workspace: $workspace,
       branch: (if $branch == "" then null else $branch end),
       commit: (if $commit == "" then null else $commit end),
@@ -318,8 +352,10 @@ record_failed_run() {
         --arg branch "${REVENG_BRANCH:-}" \
         --arg commit "${REVENG_COMMIT:-}" \
         --arg dirty "${REVENG_DIRTY:-}" \
+        --arg effort "${REVENG_EFFORT:-}" \
         --argjson code "$exit_code" '
     { ts: $ts, run_id: $run_id, command: $command, model: $model,
+      effort: (if $effort == "" then null else $effort end),
       phase: $phase, workspace: $workspace,
       branch: (if $branch == "" then null else $branch end),
       commit: (if $commit == "" then null else $commit end),
@@ -334,13 +370,48 @@ record_failed_run() {
       models_used: null }' >> "$out" 2>/dev/null || true
 }
 
+# `claude` is invoked as a bare command, so it must be on PATH. When it is not,
+# the failure surfaces 70 lines later as "command not found" inside a pipeline,
+# with the exit status attributed to the run rather than the setup. Check first
+# and say what is wrong.
+check_claude_available() {
+  if command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Error: 'claude' is not on PATH." >&2
+  echo >&2
+  echo "reveng invokes the Claude Code CLI directly. Common causes:" >&2
+  echo "  - it is managed by a version manager (mise, asdf, nvm) whose shims" >&2
+  echo "    are added by an interactive shell profile that this run does not load" >&2
+  echo "  - it is installed for a different user than the one running reveng" >&2
+  echo "  - in a container, it is at /usr/local/share/npm-global/bin, which is" >&2
+  echo "    added to PATH by the image; check PATH survived however reveng was" >&2
+  echo "    invoked" >&2
+  echo >&2
+  echo "Set CLAUDE_BIN to an absolute path to override, e.g." >&2
+  echo "  CLAUDE_BIN=\$(command -v claude) reveng curate --confluence" >&2
+  return 1
+}
+
 run_claude() {
   local prompt="$1"
   local model="$2"
   local verbose="${3:-false}"
   local dry_run="${4:-false}"
+  local effort="${5:-}"
+  # Recorded on every metrics row, so a cost comparison between levels is
+  # possible after the fact rather than needing to be set up in advance.
+  REVENG_EFFORT="$effort"
+  export REVENG_EFFORT
 
   check_workspace_initialised
+  local claude_bin="${CLAUDE_BIN:-claude}"
+  if [[ "$claude_bin" == "claude" ]]; then
+    check_claude_available || return 1
+  elif [[ ! -x "$claude_bin" ]]; then
+    echo "Error: CLAUDE_BIN is set to '$claude_bin', which is not executable." >&2
+    return 1
+  fi
 
   # Analyst runs on a large source tree routinely exceed Claude Code's default
   # background-task ceiling (600s), which terminates the agent mid-write and
@@ -355,12 +426,18 @@ run_claude() {
   export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-10800000}"
 
   local cmd=(
-    claude -p "$prompt"
+    "$claude_bin" -p "$prompt"
     --dangerously-skip-permissions
     --output-format stream-json
     --verbose
     --model "$model"
   )
+
+  # Omitted entirely when empty, so the harness default applies rather than
+  # reveng pinning a level it did not choose.
+  if [[ -n "$effort" ]]; then
+    cmd+=(--effort "$effort")
+  fi
 
   if [[ "$dry_run" == "true" ]]; then
     echo "Would run:"
@@ -418,10 +495,13 @@ run_claude() {
   local run_started_at=$SECONDS
   set +e
   if [[ "$verbose" == "true" ]]; then
+    # --verbose streams the raw JSON instead of the progress display, so the
+    # session line stream_progress would have printed is emitted here.
+    echo "▸ Starting Claude session (model: $model, effort: ${effort:-default})" >&2
     "${cmd[@]}" 2>&1 | tee "$raw_log" /dev/stderr | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
     pipe_status=("${PIPESTATUS[@]}")
   else
-    "${cmd[@]}" 2>&1 | tee "$raw_log" >(stream_progress >&2) | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
+    "${cmd[@]}" 2>&1 | tee "$raw_log" >(stream_progress "$effort" >&2) | jq -rR --unbuffered 'fromjson? | objects | select(.type == "result") | .result // empty'
     pipe_status=("${PIPESTATUS[@]}")
   fi
   set -e
@@ -690,6 +770,31 @@ validate_inputs() {
         return 1
       fi
       ;;
+    confluence)
+      # The export directory is configurable because the agent is generic; only
+      # the default matches reveng's own scaffolding.
+      local export_dir="${REVENG_EXPORT_DIR:-confluence-export}"
+      if [[ ! -d "$export_dir" ]]; then
+        echo "Error: no documentation export found at $export_dir/." >&2
+        echo "Place a Confluence or wiki export there, or set REVENG_EXPORT_DIR." >&2
+        return 1
+      fi
+      # A directory that exists but holds nothing convertible is a likelier
+      # mistake than a missing one (wrong path, interrupted download), so it is
+      # worth its own message rather than letting the agent report an empty run.
+      local has_content=false
+      local f
+      for f in "$export_dir"/pages/*.md "$export_dir"/attachments/*/* "$export_dir"/*.md; do
+        if [[ -f "$f" ]]; then
+          has_content=true
+          break
+        fi
+      done
+      if [[ "$has_content" == "false" ]]; then
+        echo "Error: $export_dir/ contains no pages or attachments." >&2
+        return 1
+      fi
+      ;;
     synth)
       local has_html=false
       local has_curated=false
@@ -699,7 +804,10 @@ validate_inputs() {
           break
         fi
       done
-      for f in output/transcripts/*_curated.txt; do
+      # Any extension: curate-transcript preserves the source's, so a markdown
+      # transcript stays markdown. `_curated` is what marks a file as prepared,
+      # not the extension — and the analyst agents glob the same pattern.
+      for f in output/transcripts/*_curated.*; do
         if [[ -f "$f" ]]; then
           has_curated=true
           break
@@ -712,7 +820,7 @@ validate_inputs() {
         # put them in output/mockups/, and "no curated content" gave no hint
         # that the files existed at all, let alone where the check was looking.
         [[ "$has_html" == "false" ]] && echo "  missing: output/html/*.html" >&2
-        [[ "$has_curated" == "false" ]] && echo "  missing: output/transcripts/*_curated.txt" >&2
+        [[ "$has_curated" == "false" ]] && echo "  missing: output/transcripts/*_curated.*" >&2
         # If the outputs exist under another name, say so rather than implying
         # the work was never done.
         # find exits non-zero when output/ does not exist, which is precisely the
@@ -736,6 +844,18 @@ validate_inputs() {
           echo "  Move them to output/html/ (it is gitignored as a regenerable intermediate)." >&2
         fi
         echo "Run 'reveng curate' first to prepare screenshots and transcripts." >&2
+        return 1
+      fi
+      ;;
+    resolve)
+      local missing=""
+      for a in domain application interaction database; do
+        [[ -f "output/$a-analysis.md" ]] || missing+="  missing: output/$a-analysis.md"$'\n'
+      done
+      if [[ -n "$missing" ]]; then
+        echo "Error: resolve answers questions the analyses raise, so it needs them first." >&2
+        printf '%s' "$missing" >&2
+        echo "Run 'reveng synth --analyses-only' to produce them." >&2
         return 1
       fi
       ;;
@@ -764,7 +884,11 @@ flag_allowed() {
 # that e.g. `reveng curate --prd-only` is rejected rather than silently ignored.
 parse_flags() {
   local default_model="$1"
-  shift
+  # Commands with one phase pass the same value twice; synth passes its analysis
+  # and PRD defaults.
+  local default_analysis_effort="$2"
+  local default_prd_effort="$3"
+  shift 3
   # Allowed extra flags are passed first and terminated by "--", so they are
   # never confused with the caller's own arguments.
   local -a allowed=()
@@ -776,10 +900,16 @@ parse_flags() {
   fi
 
   MODEL="$default_model"
+  ANALYSIS_EFFORT="$default_analysis_effort"
+  PRD_EFFORT="$default_prd_effort"
+  # --effort sets both phases; --analysis-effort / --prd-effort set one. Tracked
+  # separately so the granular flags win regardless of the order they appear in.
+  local effort_both="" effort_analysis="" effort_prd=""
   VERBOSE="false"
   DRY_RUN="false"
   SHOW_HELP="false"
   RUN_ID_OVERRIDE=""
+  CURATE_CONFLUENCE="false"
   SYNTH_ANALYSES_ONLY="false"
   SYNTH_PRD_ONLY="false"
   SYNTH_FORCE="false"
@@ -792,6 +922,50 @@ parse_flags() {
           return 1
         fi
         MODEL="$2"
+        shift 2
+        ;;
+      -e|--effort)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --effort requires an argument." >&2
+          return 1
+        fi
+        if [[ " $VALID_EFFORTS " != *" $2 "* ]]; then
+          echo "Error: invalid --effort '$2'. Valid levels: $VALID_EFFORTS." >&2
+          return 1
+        fi
+        effort_both="$2"
+        shift 2
+        ;;
+      --analysis-effort)
+        if ! flag_allowed "--analysis-effort" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --analysis-effort is not valid for this command." >&2
+          return 1
+        fi
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --analysis-effort requires an argument." >&2
+          return 1
+        fi
+        if [[ " $VALID_EFFORTS " != *" $2 "* ]]; then
+          echo "Error: invalid --analysis-effort '$2'. Valid levels: $VALID_EFFORTS." >&2
+          return 1
+        fi
+        effort_analysis="$2"
+        shift 2
+        ;;
+      --prd-effort)
+        if ! flag_allowed "--prd-effort" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --prd-effort is not valid for this command." >&2
+          return 1
+        fi
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --prd-effort requires an argument." >&2
+          return 1
+        fi
+        if [[ " $VALID_EFFORTS " != *" $2 "* ]]; then
+          echo "Error: invalid --prd-effort '$2'. Valid levels: $VALID_EFFORTS." >&2
+          return 1
+        fi
+        effort_prd="$2"
         shift 2
         ;;
       -v|--verbose)
@@ -826,6 +1000,14 @@ parse_flags() {
         SYNTH_FORCE="true"
         shift
         ;;
+      --confluence)
+        if ! flag_allowed "--confluence" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --confluence is not valid for this command." >&2
+          return 1
+        fi
+        CURATE_CONFLUENCE="true"
+        shift
+        ;;
       --run-id)
         if [[ $# -lt 2 ]]; then
           echo "Error: --run-id requires an argument." >&2
@@ -844,6 +1026,25 @@ parse_flags() {
         ;;
     esac
   done
+
+  # Resolve effort last, so precedence does not depend on flag order:
+  # per-phase flag > --effort > the command's default.
+  if [[ -n "$effort_both" ]]; then
+    ANALYSIS_EFFORT="$effort_both"
+    PRD_EFFORT="$effort_both"
+  fi
+  # Written as full if-blocks: a trailing `[[ ... ]] && x=y` whose test fails
+  # returns non-zero, and under `set -e` that would fail the whole function.
+  if [[ -n "$effort_analysis" ]]; then
+    ANALYSIS_EFFORT="$effort_analysis"
+  fi
+  if [[ -n "$effort_prd" ]]; then
+    PRD_EFFORT="$effort_prd"
+  fi
+
+  # Single-phase commands read EFFORT; both defaults are the same for them, and
+  # --effort sets both, so either field would do.
+  EFFORT="$ANALYSIS_EFFORT"
 }
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -890,7 +1091,8 @@ Adds to .gitignore:
   .claude/
   .reveng/
   output/html/
-  output/transcripts/*_curated.txt
+  output/transcripts/*_curated.*
+  output/reference/redaction-map.md
 
 Existing files at the destination are skipped (with a warning), so
 local edits to agents, skills, or CLAUDE.md are preserved. To refresh,
@@ -929,7 +1131,10 @@ EOF
   # .reveng/ holds the run-cost log. Ignored by default so cost data is never
   # committed by accident; un-ignore it deliberately to keep the cost record
   # with the analysis (e.g. as evidence in a business case).
-  local gitignore_entries=(".claude/" ".reveng/" "output/html/" "output/transcripts/*_curated.txt")
+  # The redaction map concentrates real personal values by design, so that one
+  # identity maps to one pseudonym corpus-wide. Committing it would defeat the
+  # redaction it enables, and history is far harder to clean than a file.
+  local gitignore_entries=(".claude/" ".reveng/" "output/html/" "output/transcripts/*_curated.*" "output/reference/redaction-map.md")
   local touched=false
   # A .gitignore whose last line has no trailing newline would otherwise get the
   # first new entry concatenated onto it, silently corrupting both rules (e.g.
@@ -952,7 +1157,15 @@ EOF
 }
 
 cmd_curate() {
-  parse_flags "$CURATE_DEFAULT_MODEL" -- "$@"
+  # The effort default depends on --confluence, which parse_flags has not read
+  # yet, so parse twice: once to learn the mode, then again with the right
+  # default so an explicit --effort still wins over it.
+  parse_flags "$CURATE_DEFAULT_MODEL" "$CURATE_DEFAULT_EFFORT" "$CURATE_DEFAULT_EFFORT" \
+    --confluence -- "$@"
+  if [[ "$CURATE_CONFLUENCE" == "true" ]]; then
+    parse_flags "$CURATE_DEFAULT_MODEL" "$CURATE_CONFLUENCE_DEFAULT_EFFORT" \
+      "$CURATE_CONFLUENCE_DEFAULT_EFFORT" --confluence -- "$@"
+  fi
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -963,6 +1176,12 @@ analysis-ready outputs using the digital-content-curator agent.
 
 Options:
   -m, --model MODEL   Claude model to use (default: opus)
+  -e, --effort LEVEL   Reasoning effort: low, medium, high, xhigh, max
+                       (default: high, or xhigh with --confluence)
+  --confluence         Curate a Confluence/wiki export under
+                       confluence-export/ (or $REVENG_EXPORT_DIR) using the
+                       confluence-curator agent, instead of screenshots and
+                       transcripts
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
   --run-id ID          Label this run in the metrics log
@@ -971,17 +1190,33 @@ EOF
     return 0
   fi
 
-  validate_inputs curate
-  init_run_id "curate" "$MODEL"
+  local prompt check_type run_label
+  if [[ "$CURATE_CONFLUENCE" == "true" ]]; then
+    check_type="confluence"
+    run_label="curate-confluence"
+    prompt="Run the \`confluence-curator\` agent to triage and convert the documentation export under ${REVENG_EXPORT_DIR:-confluence-export}/."
+  else
+    check_type="curate"
+    run_label="curate"
+    prompt="Run the \`digital-content-curator\` agent to prepare all the screenshots and transcripts for analysis."
+  fi
+
+  validate_inputs "$check_type"
+  init_run_id "$run_label" "$MODEL"
+  # Distinguishes the two curation paths in the metrics log, which otherwise
+  # both appear as plain "curate" and cannot be compared or summed apart.
+  REVENG_PHASE="/$run_label"
   run_claude \
-    "Run the \`digital-content-curator\` agent to prepare all the screenshots and transcripts for analysis." \
+    "$prompt" \
     "$MODEL" \
     "$VERBOSE" \
-    "$DRY_RUN"
+    "$DRY_RUN" \
+    "$EFFORT"
 }
 
 cmd_synth() {
-  parse_flags "$SYNTH_DEFAULT_MODEL" --analyses-only --prd-only --force -- "$@"
+  parse_flags "$SYNTH_DEFAULT_MODEL" "$SYNTH_ANALYSIS_DEFAULT_EFFORT" "$SYNTH_PRD_DEFAULT_EFFORT" \
+    --analyses-only --prd-only --force --analysis-effort --prd-effort -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -997,6 +1232,11 @@ PRD is synthesised.
 
 Options:
   -m, --model MODEL   Claude model to use (default: opus)
+  -e, --effort LEVEL   Reasoning effort for both phases: low, medium, high,
+                       xhigh, max
+  --analysis-effort LEVEL
+                       Effort for the four analysts (default: xhigh)
+  --prd-effort LEVEL   Effort for the PRD synthesis (default: max)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
   --analyses-only      Run the analysts and stop before the PRD
@@ -1040,10 +1280,11 @@ EOF
   echo "▸ Synthesising PRD"
   REVENG_PHASE="/synth/prd"
   run_claude \
-    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them." \
+    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them. If output/open-question-answers.md exists, read it too and apply the subordination rules in your agent definition; if it does not, that is normal and not an error." \
     "$MODEL" \
     "$VERBOSE" \
-    "$DRY_RUN"
+    "$DRY_RUN" \
+    "$PRD_EFFORT"
 }
 
 # Run each analyst as its own top-level Claude session, skipping those whose
@@ -1141,7 +1382,8 @@ cmd_synth_analyses() {
       "Run the \`$agent\` agent. Write its complete analysis to $out." \
       "$MODEL" \
       "$VERBOSE" \
-      "$DRY_RUN"; then
+      "$DRY_RUN" \
+      "$ANALYSIS_EFFORT"; then
       trap - INT TERM
       if [[ -n "$prev" && -f "$prev" ]]; then
         mv -f "$prev" "$out" 2>/dev/null || true
@@ -1195,8 +1437,52 @@ cmd_synth_analyses() {
   return 0
 }
 
+cmd_resolve() {
+  parse_flags "$SYNTH_DEFAULT_MODEL" "$RESOLVE_DEFAULT_EFFORT" "$RESOLVE_DEFAULT_EFFORT" -- "$@"
+
+  if [[ "$SHOW_HELP" == "true" ]]; then
+    cat <<'EOF'
+Usage: reveng resolve [options]
+
+Runs the open-question-resolver agent over the four analyses, answering their
+open questions from a second corpus the analysts were not permitted to read.
+Writes output/open-question-answers.md and never edits an analysis.
+
+The workspace CLAUDE.md must say what that second corpus is, where it lives,
+and where the boundary of the analysed corpus falls — the agent classifies
+each question as inside or outside that boundary, and imports content only
+for the questions inside it. Without that guidance there is nothing to run
+against.
+
+Skip this step in a workspace that has only one corpus.
+
+Options:
+  -m, --model MODEL   Claude model to use (default: opus)
+  -e, --effort LEVEL   Reasoning effort: low, medium, high, xhigh, max
+                       (default: xhigh)
+  -v, --verbose        Show Claude commands and raw output
+  --dry-run            Print what would be executed without running
+  --run-id ID          Label this run in the metrics log
+  -h, --help           Show this help message
+EOF
+    return 0
+  fi
+
+  validate_inputs resolve
+  init_run_id "resolve" "$MODEL"
+
+  echo "▸ Resolving open questions"
+  REVENG_PHASE="/resolve"
+  run_claude \
+    "Run the \`open-question-resolver\` agent. The four analysis files exist in output/; read the workspace CLAUDE.md for what the second corpus is and where the analysed corpus ends." \
+    "$MODEL" \
+    "$VERBOSE" \
+    "$DRY_RUN" \
+    "$EFFORT"
+}
+
 cmd_decompose() {
-  parse_flags "$DECOMPOSE_DEFAULT_MODEL" -- "$@"
+  parse_flags "$DECOMPOSE_DEFAULT_MODEL" "$DECOMPOSE_DEFAULT_EFFORT" "$DECOMPOSE_DEFAULT_EFFORT" -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -1207,6 +1493,8 @@ using the prd-to-features agent.
 
 Options:
   -m, --model MODEL   Claude model to use (default: opus)
+  -e, --effort LEVEL   Reasoning effort: low, medium, high, xhigh, max
+                       (default: xhigh)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
   --run-id ID          Label this run in the metrics log
@@ -1221,7 +1509,8 @@ EOF
     "Run the \`prd-to-features\` agent to decompose the PRD into individual feature specifications." \
     "$MODEL" \
     "$VERBOSE" \
-    "$DRY_RUN"
+    "$DRY_RUN" \
+    "$EFFORT"
 }
 
 sandbox_clean() {
@@ -1419,6 +1708,7 @@ EOF
 case "${1:-}" in
   curate)      shift; cmd_curate "$@" ;;
   synth)       shift; cmd_synth "$@" ;;
+  resolve)     shift; cmd_resolve "$@" ;;
   decompose)   shift; cmd_decompose "$@" ;;
   sandbox)     shift; cmd_sandbox "$@" ;;
   init)        shift; cmd_init "$@" ;;

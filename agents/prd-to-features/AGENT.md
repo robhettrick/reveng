@@ -30,12 +30,30 @@ Use the Read tool to open the PRD file. If the file does not exist, stop and tel
 
 ### Step 2: Check for existing features
 
-Use Glob for `output/features/FT-*.md`. If feature files already exist:
-- Read each one and note the highest feature ID (FT-XXX) and the highest user story ID (US-XXX) already assigned.
-- Use the next available sequential numbers when generating new features.
-- Do not regenerate features that already exist — only produce features for PRD content not yet covered.
+**First look for `output/features/INDEX.md`.** It is written before any feature file
+(Step 6), so if it exists a previous run got at least as far as planning.
 
-If no feature files exist, start from FT-001 and US-001.
+If the index exists:
+- Read it. It carries the full plan — every feature, its build order, its story range and
+  its dependencies — so you do not need to read the feature files to recover the plan.
+- Glob `output/features/FT-*.md` to see which of the planned features were actually
+  written. The difference between the index and the files on disk is the work remaining.
+- **Keep the existing plan.** Do not renumber, re-slice or re-order what the index
+  records — a half-built set whose numbering shifts underneath it is worse than either
+  finishing or starting again. Resume at the first planned feature with no file, and work
+  through the remainder in build order.
+- Skip Steps 3, 4 and 6; go straight to generating the missing features. Read the PRD
+  sections each missing feature needs, not the whole PRD.
+- If the index is unreadable or plainly inconsistent with the files on disk, say so and
+  ask whether to start again rather than guessing.
+
+If no index exists but feature files do, a run predating this instruction left them.
+Read each one, note the highest feature and user-story ids, and continue from there.
+
+If neither exists, start from FT-000 and US-001.
+
+**Clean up any `.part-*` or other partial files** you find before continuing. They are the
+residue of an interrupted write, and they are not the plan.
 
 ### Step 3: Read and internalise the PRD
 
@@ -45,13 +63,54 @@ Read the entire PRD, then use `ultrathink` to deeply analyse its contents. Befor
 - **Key User Interfaces & Screens** (Section 4) — screens that form a cohesive workflow
 - **Workflows** (Section 6) — end-to-end journeys that deliver distinct user value
 - **Business Rules** (Section 5) — rules that cluster around specific capabilities
-- **Open Questions** (Section 13) — read the full text of every open question and note which feature areas each one bears on. You will paste the bearing questions into each feature-writer prompt in Step 6, so capture the wording, not just the position in the list.
+- **Open Questions** (Section 13) — read the full text of every open question and note which feature areas each one bears on. You will paste the bearing questions into each feature-writer prompt in Step 7, so capture the wording, not just the position in the list.
 
 Group related PRD content into features using these principles:
-- Each feature should be **self-contained and independently deliverable** where possible
-- A feature should map to a coherent unit of user value, not a technical layer
+
+- **A feature must be demonstrable.** The test: when this feature is done, can someone
+  show it working to a stakeholder who is not a developer? If the honest answer is "not
+  until feature X also exists", the boundary is drawn wrong — either fold X in, or move
+  the demonstrable part of X into this feature.
+- **Slice vertically, not by tier.** A feature carries its own screen, its rules, its
+  validation and its persistence — the whole thin path for one user goal. A feature that
+  is only a data model, only an API, or only a screen with nothing behind it is a tier,
+  not a feature, and must be merged into the slice that uses it.
+- **Prefer the thin path first.** Where a capability has an obvious happy path and a long
+  tail of variants, the happy path is one feature and the variants are separate later
+  ones. "Register a customer with the mandatory fields" ships and demos; "register a
+  customer with every affiliation, identifier variant and review state" does not.
 - Prefer features scoped to a single bounded context; cross-context features are acceptable when the workflow is inseparable
-- Common infrastructure (authentication, navigation shell, shared reference data) may form its own feature if substantial enough
+
+**Shared platform capability is the deliberate exception.** Some things genuinely are
+consumed by everything and cannot be sliced without building most of them anyway —
+typically shared reference data, a document or notification pipeline, or a shared
+validation library. These may be their own features. Two conditions apply: name the
+concrete consumers that force the sharing, and build **only the part the first consuming
+slice needs**, leaving the rest to arrive as later slices demand it. A platform feature
+that builds the whole capability up front on the argument that everything will eventually
+need it is the horizontal split under another name.
+
+If more than about a quarter of your features are platform features, the decomposition
+has gone horizontal — revisit it.
+
+### Target-implementation constraints
+
+The workspace `CLAUDE.md` may point to rules governing the system being **built** — a
+service decomposition, a design system, platform or testing standards. These are not
+legacy evidence and never change what a feature *does*; they constrain how it is
+specified. Read the ones bearing on features and hold them in context:
+
+- **A service or component decomposition** — which services exist and what each owns.
+  Every feature must name the services it touches, and a feature touching more than one
+  is worth noting, since that is where integration cost lands. Do not redesign the
+  decomposition or invent services: cite what the rules define, and where a feature does
+  not fit cleanly, record that as an open question rather than deciding it yourself.
+- **A design system or UI standard** — its page-composition patterns govern the wireframes
+  and UI sections you specify. A wireframe drawn against a different pattern will be
+  redrawn during the build, and the acceptance criteria written against it will no longer
+  match.
+
+If no such rules are configured, skip this and specify features without them.
 
 Also identify and hold in context the **shared PRD content** that applies across all features:
 - Actors and personas table
@@ -60,7 +119,7 @@ Also identify and hold in context the **shared PRD content** that applies across
 
 ### Step 4: Plan the feature breakdown
 
-Before writing any feature files, use `ultrathink` to reason carefully about the feature breakdown, dependencies, and **implementation order**. Applications are built bottom-up, in layers — you must plan the features so they can be implemented in that order.
+Before writing any feature files, use `ultrathink` to reason carefully about the feature breakdown, dependencies, and **implementation order**. Order the features so that something can be demonstrated early and often, and so that each feature's genuine prerequisites precede it.
 
 #### Dependency semantics
 
@@ -68,26 +127,70 @@ Before writing any feature files, use `ultrathink` to reason carefully about the
 
 **Downstream dependency** means: Feature B is downstream of Feature A if B cannot be built until A exists. "Downstream" is synonymous with "built later".
 
-#### Bottom-up build principle
+#### Build order principle
 
-Applications are constructed in layers, from the inside out:
+**FT-000 is a walking skeleton.** The first feature is the thinnest end-to-end path that
+proves the stack: a shell that renders, one route, one screen, one piece of real data
+read from real storage, and an identity the application recognises. It exists so that
+every feature after it has somewhere to be seen.
 
-1. **Lowest layers — Data and domain foundations**: shared reference data, shared entities, data models, and core domain logic. These are the raw materials that screens and workflows are built on top of.
-2. **Middle layers — Individual domain screens and workflows**: self-contained screens, subcomponents, and workflows that deliver distinct user value. Each operates independently within its bounded context.
-3. **Highest layers — Cross-cutting and orchestration concerns**: authentication, authorisation, navigation shells, landing pages, home screens, dashboards, and any feature whose primary purpose is to aggregate, link to, wire together, or gate access to other features. These are built **last**.
+It is **deliberately shallow, and staying shallow is the hard part.** Concretely: three
+to five user stories, and none of the capability that will later hang off the shell.
+Navigation is one link, not a menu structure. Identity is "the application knows who you
+are", not roles, permissions, org-unit selection or session policy. The one data read is
+whatever is simplest to show, not a real search. Every one of those belongs to the slice
+that needs it, and pulling them forward defeats the purpose — a skeleton that takes as
+long as a real feature has bought nothing.
 
-A screen that *references*, *navigates to*, or *aggregates* other features is a **consumer** of those features. It has upstream dependencies on them — not the other way around. Do not invert this: the home screen depends on the subcomponents it links to, not vice versa. Likewise, authentication and navigation are cross-cutting concerns that wrap the domain features — they are implemented after the features they protect and connect, not before.
+If FT-000's story list grows past five, you are building the portal, not the skeleton.
+Move the excess into later slices.
+
+After that, order features by **genuine** prerequisites. A feature is upstream only if the
+downstream one cannot be built or meaningfully tested without it. Ask what this feature
+truly needs to work, not what tier it belongs to.
+
+**Two orderings that look like dependencies but are not:**
+
+- **A navigation shell is not downstream of what it displays.** A shell with one link is
+  buildable on day one and every later feature adds a link to it. Placing it late means
+  nothing before it can be reached, navigated, or shown to anyone. Plan the shell early
+  and let it grow; only genuine aggregation — a dashboard that computes across features,
+  a composite view that reads several — is downstream of the features it aggregates, and
+  even then it is downstream of *those specific* features, not of everything.
+- **Authorisation is not a wrapper applied at the end.** Where the source describes
+  role-dependent behaviour, that behaviour is part of each feature's rules and cannot be
+  retrofitted across a finished application without revisiting every screen. Establish
+  the permission model early — the roles, how a check is expressed, how a screen adapts
+  — then let each feature carry its own checks.
+
+  Authentication is a different thing from authorisation and is often blocked on an
+  identity provider that does not exist yet. Do not let that block the permission model:
+  put the identity behind a seam the application can satisfy with a stub, and treat
+  wiring the real provider as its own small, late feature.
+
+Prefer building shared capability at the point of first need. Where a later feature will
+extend it, say so in the dependency columns rather than building the whole thing up front.
 
 #### Reasoning checklist
 
 Work through the following for each proposed feature:
 
-- Is this feature truly self-contained, or does it implicitly rely on data, configuration, or behaviour from another feature?
-- What must be built before this feature can be meaningfully implemented and tested? (These are its upstream dependencies.)
-- What other features cannot be built until this one exists? (These are its downstream dependencies.)
-- Does this feature depend on shared reference data, shared entities, or data models? If so, treat those data foundation features as upstream dependencies.
-- Is this feature a cross-cutting or orchestration concern (authentication, navigation shell, landing page, dashboard)? If so, it belongs in the highest layers — it depends on the domain features it wraps, protects, or links to.
-- What build layer does this feature belong to? A feature's layer is one greater than the highest layer among its upstream dependencies (or 0 if it has no upstream dependencies).
+- **Can this be demonstrated on its own?** Name the person who would watch it and what
+  they would see. If you cannot, the feature is a tier — merge it into the slice that
+  gives it a visible outcome.
+- Does this feature carry its own screen, rules and persistence, or is it only one tier
+  of several? A slice that stops at the API boundary is not demonstrable.
+- Is it as thin as it can be while still being worth showing? Could a long tail of
+  variants become later features without spoiling the demo?
+- What must genuinely exist before this can be built or tested? (These are its upstream
+  dependencies.) State *why* for each — "needs the shell to render in" is a real reason;
+  "belongs to a higher tier" is not.
+- What other features cannot be built until this one exists? (These are its downstream
+  dependencies.)
+- If you are treating shared capability as upstream, is the sharing real? Name the
+  consumers. If only one feature consumes it today, fold it into that feature.
+- What build layer does this feature belong to? A feature's layer is one greater than the
+  highest layer among its upstream dependencies (or 0 if it has no upstream dependencies).
 
 #### Output
 
@@ -107,17 +210,80 @@ Be explicit in both dependency columns — do not leave them blank without havin
 
 Verify the ordering before presenting: walk each feature and confirm that all of its upstream dependencies appear in a lower layer. If they do not, re-assign layers until the ordering is consistent.
 
+Then check the plan delivers what the ordering is for:
+
+- **FT-000 is the walking skeleton**, and it is small.
+- **Every feature after FT-000 is demonstrable when it lands.** Walk the table in order
+  and, for each, say in one phrase what a stakeholder would see. If you reach a run of
+  features where the honest answer is "nothing yet", the plan has gone horizontal.
+- **No navigation shell or permission model sits in the upper layers.** If either does,
+  you have treated a cross-cutting concern as an aggregation of what it wraps.
+- **Platform features are a minority**, each names its consumers, and each is scoped to
+  what its first consumer needs.
+
+Report the check with the plan — state the demo outcome for the first few features
+explicitly, so the reader can see the ordering works rather than taking it on trust.
+
 Wait for the user to confirm or adjust the plan before proceeding.
 
 ### Step 5: Ensure the output directory exists
 
 Run `mkdir -p output/features`.
 
-### Step 6: Generate each feature file in parallel
+### Step 6: Write the feature index
+
+Write `output/features/INDEX.md` **now, before generating any feature file.** It is the
+only artefact that carries the build order, and writing it first means an interrupted run
+can be resumed from it (Step 2) rather than reconstructed by reading every feature.
+
+Record the plan the user confirmed in Step 4. Mark each feature's status as `planned`.
+
+Open with the source PRD path and date, the feature count and the user-story range. Then
+the build-order table, sorted by layer ascending and feature ID within a layer:
+
+| Layer | ID | Status | Title | What a stakeholder sees | Services | Priority | Upstream | Downstream |
+
+**Services** names the services from the target decomposition this feature touches, or
+`—` where none is configured. A row naming more than one is a cross-service feature;
+list those beneath the table so the integration points are visible in one place.
+
+**Status** is `planned` or `written`. Update a row to `written` as each feature file
+lands, so the index and the directory never disagree about what exists.
+
+**"What a stakeholder sees"** is a short phrase naming the visible outcome when the
+feature lands — "search for a holding by CPH and open it", "sign off a test and see the
+status change". A feature whose cell reads "no visible change" or "backend only" should
+have been merged into the slice that gives it an outcome; if one survives to this point,
+mark it and say why in a note beneath the table.
+
+Close with a short **Platform features** note listing any feature that exists to be shared
+rather than to be demonstrated, each with the consumers that justify it.
+
+Keep it scannable — someone deciding what to build next, or what to demo on Friday, should
+get it from this table without opening a feature file.
+
+After every feature file has been generated (Step 7), return to the index: set the
+remaining rows to `written`, and correct any title, story range or dependency that
+changed during generation. The index must end the run agreeing with the files on disk.
+
+### Step 7: Generate each feature file in parallel
 
 For each feature in the confirmed plan, launch a `feature-writer` agent using the Agent tool. Fire all agents in a single message — do not wait for one to finish before launching the next.
 
+**One feature is one file, written in one Write call.** If a feature is too large to
+write in a single call, it is too large as a feature — that is a signal to split the
+*feature*, not the file. Never leave partial or `.part-*` files behind: a directory of
+fragments cannot be resumed from and does not tell a reader what exists. Say so
+explicitly in each prompt.
+
 Each `feature-writer` agent must receive a fully self-contained prompt. Construct each prompt to include the following sections, clearly labelled:
+
+**Target-implementation constraints** (omit if none are configured):
+- The services this feature touches, quoted from the decomposition rules, and what each
+  owns. Say explicitly if the feature crosses a service boundary.
+- The design-system or UI rules bearing on this feature's screens, quoted rather than
+  summarised, so wireframes are drawn to the pattern the build will use.
+- The path of each rules file, so the writer can cite it.
 
 **Feature metadata:**
 - Feature ID (FT-XXX)
@@ -147,19 +313,21 @@ Paste the entire **Feature template and authoring rules** section from the end o
 
 Authoring rule 6 (the standalone rule) is the only place the worker is told which references its reader can resolve. Omit or abridge it and the feature file will defer to a PRD its implementer does not have.
 
-### Step 7: Report results
+### Step 8: Report results
 
 Return a summary containing:
 - The number of feature files generated
 - The file path of each feature
 - The total number of user stories across all features
+- Confirmation that `output/features/INDEX.md` was written, and the first three features
+  in build order with what each demonstrates
 - Any open questions or gaps noted during decomposition
 
 ---
 
 ## Feature template and authoring rules
 
-The content below is what you paste verbatim into every feature-writer prompt under the **Template and authoring rules** heading (per Step 6). Do not paraphrase, summarise, or trim — copy it as-is, starting from "How to fill the template" through the end of the markdown template.
+The content below is what you paste verbatim into every feature-writer prompt under the **Template and authoring rules** heading (per Step 7). Do not paraphrase, summarise, or trim — copy it as-is, starting from "How to fill the template" through the end of the markdown template.
 
 ### How to fill the template
 
@@ -179,6 +347,13 @@ The content below is what you paste verbatim into every feature-writer prompt un
 7. User stories must follow the format: "As a [role], I want to [action], so that [benefit]" with acceptance criteria in Given/When/Then format.
 8. The UI/Layout section must be verbose enough that a designer or developer could infer a mockup from the text alone. For core workflows, describe every field, label, position, and interaction state. For secondary workflows, describe logical groupings (panels, tabs, forms) with field lists.
 9. Acceptance criteria must be written per story in Given/When/Then (Gherkin) format.
+   **Three to six scenarios per story: the happy path, the significant alternatives, and
+   the failures that change behaviour.** Do not enumerate every permutation — one scenario
+   per equivalence class, not one per value. Where a rule varies across a list (roles,
+   statuses, categories), write one scenario and a table of the cases, not a scenario each.
+   A story past six scenarios is either under-sliced or being over-specified; prefer
+   splitting the story. Exhaustive enumeration belongs in tests, which are written against
+   the rules in section 9 — not here.
 10. Exclude performance or security testing from acceptance criteria.
 11. Surface any legacy pain points, bugs, workarounds, or frustrations from the supplied PRD content as improvement opportunities in the Legacy Pain Points section.
 12. Use the Feature ID supplied — do not assign a new one.

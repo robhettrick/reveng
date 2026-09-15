@@ -16,6 +16,14 @@ shellcheck reveng install.sh
 
 This must exit 0. Optional rules (`-o all`) surface pre-existing style findings and are not part of the check.
 
+Agent and skill definitions must also pass:
+
+```bash
+python3 scripts/lint-agents.py
+```
+
+It checks the mechanical drift that review keeps finding by hand: a shell command a definition runs but its frontmatter does not grant, a step or phase referenced by a number that no longer exists, and a tool invoked in an example but not granted. It found a real one on its first run — `application-developer`'s prerequisite `find` had never been permitted.
+
 ## Conventions for working on this source repo
 
 - Use British English in all documentation

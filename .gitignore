@@ -8,6 +8,7 @@ PROMPT_build.md
 .idea/
 /.mcp.json
 __pycache__
+.serena
 
 # Claude PR review pipeline output (findings, filtered review, prompt)
 .claude-review/

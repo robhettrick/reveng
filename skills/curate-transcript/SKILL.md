@@ -12,13 +12,37 @@ The transcript file path is: `$ARGUMENTS`
 
 ## Steps
 
-1. **Derive the output path** by taking the filename, replacing the `.txt` extension with `_curated.txt`, and placing it under `output/transcripts/`. For example:
+1. **Derive the output path** by taking the filename, inserting `_curated` before
+   the extension, and placing it under `output/transcripts/`. **Preserve the
+   source extension** — a markdown transcript stays markdown, because its front
+   matter and structure are part of the content:
    - `transcripts/interview-1.txt` → `output/transcripts/interview-1_curated.txt`
    - `transcripts/deep-dive.txt` → `output/transcripts/deep-dive_curated.txt`
+   - `<export>/transcripts/demo.md` → `output/transcripts/demo_curated.md`
+
+   Downstream analysts glob `output/transcripts/*_curated.*`, so any extension is
+   found — but only if `_curated` is present, which is what marks the file as
+   safe to read.
 
 2. **Ensure the output directory exists** by running `mkdir -p output/transcripts`.
 
 3. **Copy the original file** to the output path using `cp`. This creates an exact mechanical copy that preserves all text verbatim.
+
+   **Then repair any relative links.** A transcript may reference sibling assets
+   — extracted video frames, images — by a path relative to its own directory,
+   e.g. `![0:07](../frames/<id>/<name>/frame-00007-80s.jpg)`. Copying the file
+   to `output/transcripts/` silently breaks every one of them, because the path
+   now resolves against `output/` instead of the source directory.
+
+   Rewrite each such link to point at the asset where it actually lives, as a
+   path relative to the new location — do **not** copy the assets themselves,
+   which can be tens of megabytes of frames duplicating what the export already
+   holds. For a transcript curated from `<export>/transcripts/` into
+   `output/transcripts/`, `../frames/…` becomes `../../<export>/frames/…`.
+
+   This is a mechanical path substitution, not an edit to the transcript's
+   words. Count the links before and after and confirm the number is unchanged;
+   spot-check that one rewritten path resolves to a file that exists.
 
 4. **Read the output file** using the Read tool.
 

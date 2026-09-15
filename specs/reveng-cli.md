@@ -91,12 +91,14 @@ Prepares raw screenshots and interview transcripts into structured, analysis-rea
 
 **Outputs**:
 - `output/html/*.html` — semantic HTML mockups of each screenshot
-- `output/transcripts/*_curated.txt` — transcripts with off-topic content removed
+- `output/transcripts/*_curated.*` — transcripts with off-topic content removed, keeping the source extension
 
 **Options**:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-m, --model MODEL` | `opus` | Claude model to use |
+| `-e, --effort LEVEL` | `high`, or `xhigh` with `--confluence` | Reasoning effort: `low`, `medium`, `high`, `xhigh`, `max` |
+| `--confluence` | off | Curate a Confluence/wiki export under `confluence-export/` (or `$REVENG_EXPORT_DIR`) with the `confluence-curator` agent, instead of screenshots and transcripts |
 | `-v, --verbose` | off | Show Claude commands and raw output |
 | `--dry-run` | off | Print what would be executed without running |
 
@@ -117,7 +119,7 @@ Runs the four analysis agents (where their outputs are missing) and synthesises 
 
 **Inputs**:
 - `output/html/*.html`
-- `output/transcripts/*_curated.txt`
+- `output/transcripts/*_curated.*`
 - `src/` (legacy source code, optional — drives the code analysts)
 - `output/domain-analysis.md`, `output/interaction-analysis.md`, `output/application-analysis.md`, `output/database-analysis.md` (reused if present, generated otherwise)
 
@@ -132,6 +134,9 @@ Runs the four analysis agents (where their outputs are missing) and synthesises 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-m, --model MODEL` | `opus` | Claude model to use |
+| `-e, --effort LEVEL` | — | Reasoning effort for both phases: `low`, `medium`, `high`, `xhigh`, `max` |
+| `--analysis-effort LEVEL` | `xhigh` | Effort for the four analysts |
+| `--prd-effort LEVEL` | `max` | Effort for the PRD synthesis |
 | `-v, --verbose` | off | Show Claude commands and raw output |
 | `--dry-run` | off | Print what would be executed without running |
 
@@ -159,6 +164,7 @@ Decomposes the PRD into individually deliverable feature specifications.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-m, --model MODEL` | `opus` | Claude model to use |
+| `-e, --effort LEVEL` | varies by command | Reasoning effort: `low`, `medium`, `high`, `xhigh`, `max` |
 | `-v, --verbose` | off | Show Claude commands and raw output |
 | `--dry-run` | off | Print what would be executed without running |
 
@@ -245,7 +251,7 @@ CLAUDE.md                        (copied from ~/.config/reveng/plugin/CLAUDE.md)
 ```
 .claude/
 output/html/
-output/transcripts/*_curated.txt
+output/transcripts/*_curated.*
 ```
 
 **Refresh policy**: re-running `reveng init` skips any file that already exists at the destination. To refresh a specific agent or skill, delete it from `.claude/` first and re-run init. The workspace `CLAUDE.md` is treated the same way.
@@ -284,6 +290,7 @@ These flags are accepted by all commands that invoke Claude:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-m, --model MODEL` | varies by command | Claude model to use |
+| `-e, --effort LEVEL` | varies by command | Reasoning effort: `low`, `medium`, `high`, `xhigh`, `max` |
 | `-v, --verbose` | off | Show Claude commands and raw output |
 | `--dry-run` | off | Print what would be executed without running |
 | `-h, --help` | | Show help |
@@ -340,6 +347,15 @@ CURATE_DEFAULT_MODEL="opus"
 SYNTH_DEFAULT_MODEL="opus"
 DECOMPOSE_DEFAULT_MODEL="opus"
 
+# Effort differs by command, and synth carries two: curate is mechanical
+# dispatch (flat curve, most subagent calls); the synth analysts do coverage
+# work and run four times per synth; the PRD synthesis is reasoning-ceiling
+# work and runs once. Set any to "" to inherit the harness default.
+CURATE_DEFAULT_EFFORT="high"
+SYNTH_ANALYSIS_DEFAULT_EFFORT="xhigh"
+SYNTH_PRD_DEFAULT_EFFORT="max"
+DECOMPOSE_DEFAULT_EFFORT="xhigh"
+
 usage()          { ... }
 cmd_version()    { ... }
 cmd_init()       { ... }
@@ -375,7 +391,7 @@ Commands that depend on prior stages validate inputs before invoking Claude:
 | Command | Validates |
 |---------|-----------|
 | `curate` | At least one file in `screenshots/` or `transcripts/` |
-| `synth` | At least one file in `output/html/` and at least one file in `output/transcripts/*_curated.txt` (the product-manager agent enforces the same prerequisite internally) |
+| `synth` | At least one file in `output/html/` and at least one file in `output/transcripts/*_curated.*` (the product-manager agent enforces the same prerequisite internally) |
 | `decompose` | `output/PRD.md` exists |
 
 Validation failures print a clear message pointing to the prerequisite command:
