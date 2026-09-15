@@ -185,13 +185,14 @@ All `reveng` commands run headlessly — they invoke Claude Code in `--dangerous
 | `reveng curate` | Run the `digital-content-curator` agent to prepare screenshots and transcripts for analysis (default model: `opus`, effort: `high`) |
 | `reveng curate --confluence` | Run the `confluence-curator` agent to triage and convert a Confluence/wiki export under `confluence-export/` (default model: `opus`, effort: `xhigh`) |
 | `reveng synth` | Run the `product-manager` agent to produce `output/PRD.md` from curated content (default model: `opus`; effort: `xhigh` analysts, `max` PRD) |
+| `reveng resolve` | Run the `open-question-resolver` agent over the four analyses to answer their open questions from a second corpus, writing `output/open-question-answers.md` (default model: `opus`, effort: `xhigh`) |
 | `reveng decompose` | Run the `prd-to-features` agent to decompose `output/PRD.md` into `output/features/FT-*.md` (default model: `opus`, effort: `xhigh`) |
 | `reveng version` | Print the CLI version and exit |
 | `reveng help` | Print usage information |
 
 ### Global flags
 
-These flags are accepted by the `curate`, `synth`, and `decompose` commands:
+These flags are accepted by the `curate`, `synth`, `resolve`, and `decompose` commands:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -210,6 +211,7 @@ Each stage validates its inputs before invoking Claude and points the user at th
 |---------|----------|
 | `curate` | At least one file in `screenshots/` or `transcripts/` |
 | `synth` | At least one `output/html/*.html` and one `output/transcripts/*_curated.*` (run `reveng curate` first) |
+| `resolve` | All four `output/*-analysis.md` files exist (run `reveng synth --analyses-only` first) |
 | `decompose` | `output/PRD.md` exists (run `reveng synth` first) |
 
 ### `reveng sandbox` workflow
@@ -296,8 +298,8 @@ Place your raw material in the reveng workspace (the directory where you ran `re
 | `output/interaction-analysis.md` | `interaction-analyst` | Comprehensive interaction analysis (screen inventory, user workflows with mermaid diagrams, screen navigation map) stitched from HTML mockups and curated transcripts |
 | `output/application-analysis.md` | `application-developer` | Comprehensive application analysis (workflows, behaviours, domain model, business rules, reports) extracted from source code |
 | `output/database-analysis.md` | `database-analyst` | Comprehensive database analysis (schema, stored procedures, triggers, constraints, database-level business rules) extracted from SQL and source code |
-| `output/PRD.md` | `open-question-resolver` | Answers the open questions an analysis raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary: inside, it imports the answer marked by source; outside, it records only that documents exist and what they cover — so the analyses are resolved rather than widened |
-| `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
+| `output/open-question-answers.md` | `open-question-resolver` | Answers the open questions the analyses raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary: inside, it imports the answer marked by source; outside, it records only that documents exist and what they cover — so the analyses are resolved rather than widened |
+| `output/PRD.md` | `product-manager` | Comprehensive Product Requirements Document synthesised from all analysis outputs |
 | `output/features/FT-XXX-*.md` | `prd-to-features` agent | Individual feature specifications decomposed from the PRD, each with user stories, wireframes, and acceptance criteria |
 
 ### Output management
@@ -371,6 +373,7 @@ graph LR
 | `application-developer` | Comprehensively reads legacy application source code under `src/` to extract workflows, behaviours, domain model, business rules, and reports for PRD generation. Detects the stack and adapts to it |
 | `database-analyst` | Comprehensively reads legacy database code under `src/` to extract schema, named routines (stored procedures/functions), triggers, constraints, and database-level business rules for PRD generation. Detects the database technology and adapts to it |
 | `product-manager` | Synthesises all analysis outputs (domain, interaction, codebase, database) into a comprehensive Product Requirements Document for implementation planning. Requires curated content as a prerequisite |
+| `open-question-resolver` | Answers the open questions the four analyses raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary and imports content only for those inside it, so the analyses are resolved rather than widened. Writes `output/open-question-answers.md` and never edits an analysis |
 | `prd-to-features` | Decomposes a PRD into individually deliverable feature specifications by spawning parallel `feature-writer` agents. Each feature includes user stories, wireframes, acceptance criteria, and effort estimates |
 | `feature-writer` *(internal)* | Worker agent spawned by `prd-to-features`. Writes a single feature specification file using the 21-section feature template. Not for direct use. |
 
