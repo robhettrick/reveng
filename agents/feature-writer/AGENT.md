@@ -36,6 +36,24 @@ Your prompt will contain the following, supplied by the prd-to-features agent:
 
 Write one file to the output file path supplied. Use the Write tool. That is the only tool you should use.
 
+**One file, one Write call, at the supplied path.** Do not split the output across several
+files, do not invent `.part-*` or numbered-suffix names, and do not write a fragment
+intending to append later — you have one call and no way to combine what you leave behind.
+
+**Aim for a specification of roughly 400 to 800 lines.** That is enough for a complete
+feature at real depth, and it fits comfortably in one call. If you are heading past that,
+you are enumerating rather than specifying — check the scenario rule in your prompt (three
+to six per story, one per equivalence class, tables for list-driven variation) before
+adding anything further. A reader who cannot hold the feature in their head has not been
+helped by the extra detail, and every downstream agent pays to read it.
+
+If the content will not fit, do not split it: write the complete document at a level of
+detail that fits. Depth is yours to control — fewer worked examples, tighter acceptance
+criteria, one representative wireframe rather than one per screen. A complete feature
+specification at moderate depth is useful; two fragments of an exhaustive one are not.
+Note in the Open Questions section what you compressed, so the reader knows where to look
+harder.
+
 Follow the **Template and authoring rules** section of your prompt exactly:
 
 - Every section in the template is mandatory.
