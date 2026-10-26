@@ -5,7 +5,7 @@ description: >
   and adapts to it. Use this agent to extract workflows, behaviours, domain
   model, and business logic from source code under src/ for downstream PRD
   generation.
-tools: Read, Write, Edit, Glob, Grep, Bash(find*), Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
+tools: Read, Write, Edit, Glob, Grep, Task, Bash(find*), Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 memory: project
 ---
 
@@ -51,7 +51,7 @@ Do not produce any output files.
 
 ## What you do
 
-On each run you **regenerate the output from scratch** — read the entire source tree and produce the analysis file fresh. This ensures the output always reflects the complete, current codebase.
+On each run you **regenerate the output from scratch** — read the entire source tree and produce the analysis file fresh. Where you delegate reading (Step 4), a run on unchanged source reuses the digests a stopped run finished; the analysis is still written fresh. This ensures the output always reflects the complete, current codebase.
 
 ## Exploration strategy
 
@@ -110,6 +110,55 @@ Glob for every primary source / view / template / resource file under `src/` for
 ### Step 4: Read every source file
 
 Systematically read **every** discovered source file, module by module. Do not sample or skip files. Comprehensive reading is essential — every file may contain business logic, workflows, or domain concepts relevant to PRD generation.
+
+Size the source first: the number of files and their total size. **If it is more than about 300 files or about 0.5 MB of text, do not read it yourself — delegate it by partition** (below). One session cannot read thousands of files in full; it reads what fits, samples the rest — typically by depth, the top of each directory — and the analysis looks complete while resting on that sample. Delegation is how "read every file" stays true at that scale.
+
+Where the source holds several versions of the same artefact — a rules export, say, with a version suffix on every file — follow the workspace `CLAUDE.md`'s guidance on which to read. Without guidance, analyse the highest version of each, and record in Section 10 where an earlier version behaves differently in a way a rewrite would need to know.
+
+#### Delegating source by partition
+
+0. **Resume before you plan.** A run that stops part-way — a usage limit, a timeout — leaves its plan and finished digests behind, and redoing them costs hours. If `output/.staging/application-analysis/_plan/plan.md` exists, check whether the source has changed since it was written:
+
+   ```
+   find src -newer output/.staging/application-analysis/_plan/plan.md -type f -print -quit
+   ```
+
+   If that prints nothing, **resume**: keep the plan, keep every digest that is finished (it has every heading through *Identifying values seen*, and its Coverage accounts for every file in its partition's `_plan/<partition-id>.files.txt`), and dispatch subagents only for the partitions without a finished digest — overwriting any partial one. Say in the metadata block that the run resumed, and how many digests it reused. Otherwise plan afresh: rewrite the plan, and re-dispatch every partition. Read only the digests the current plan names; a leftover digest from an older plan is not evidence.
+1. **Plan the partitions.** Use the partitions the workspace `CLAUDE.md` names for the application analysis, if it names any. Otherwise derive them from the source's own grouping — module, directory or artefact type, then a shared name prefix. Size each by text, not file count: at most about 0.5 MB (roughly 125,000 tokens). Split any partition larger than that along its next level of grouping. Every source file must belong to exactly one partition: list any that fit none in a final "everything else" partition rather than leaving them out. Do not leave whole artefact types to a summary because they are numerous — data mappings, calculated fields, queries and list definitions are where much of the business logic of a configured platform lives.
+2. **Write the plan** before dispatching — `mkdir -p output/.staging/application-analysis/_plan` (you hold `mkdir`; a subagent may not). Write `_plan/plan.md`, listing each partition's id, file count and size and how versions were chosen, and one `_plan/<partition-id>.files.txt` per partition, one path per line. The plan is what lets a stopped run resume, and the manifest is what each subagent reads and its coverage is checked against, so give each subagent the path to its manifest rather than a glob. Write `_plan/plan.md` last, after every part file: a stop part-way through planning then leaves no `plan.md`, and the next run plans afresh instead of trusting an incomplete plan.
+3. **Dispatch one subagent per partition** — on a resumed run, per partition without a finished digest — in parallel, in batches of at most 10 per response:
+
+   ```
+   Task(
+     subagent_type="general-purpose",
+     prompt="You are reading one partition of a legacy application's source for "
+            "an application analysis. Read the workspace CLAUDE.md for any "
+            "guidance on reading the source, then read in full every file "
+            "listed in output/.staging/application-analysis/_plan/"
+            "<partition-id>.files.txt. Read nothing outside "
+            "src/, and nothing in src/ outside this partition except a file a "
+            "partition file references, to settle a specific claim. Write exactly "
+            "one file, output/.staging/application-analysis/<partition-id>.md, "
+            "with these headings in this order: Coverage; Features; Workflows; "
+            "Business rules and validation; Domain model; Integration points; "
+            "Reports; Data access; Version differences; Gaps and contradictions; "
+            "Identifying values seen. Under Coverage, give the files read in full "
+            "by type. Cite every claim with the file path exactly as it exists "
+            "— copy it from a listing, never reconstruct it. Under Data access, "
+            "name the tables and routines used and by whom, not query internals. "
+            "Never quote a personal name, email or other identifying value, "
+            "including one embedded in an artefact's name: refer to that artefact "
+            "by its type and location and say a name was withheld, and under "
+            "'Identifying values seen' say only that one exists and in which "
+            "file. Use British English."
+   )
+   ```
+
+   **A subagent does not inherit your constraints.** It is spawned with its own tool access, so what it may read has to be stated in the prompt, as above; never assume your own limits carry across.
+4. **Check every digest's Coverage section** against its partition: the files read in full must account for the partition's file count. Re-dispatch any partition whose digest falls short, or that did not write its file.
+5. **Write from the digests.** Read every digest in full; go back to a source file only to check a specific claim. Carry every digest entry into the matching section — every *Version differences* and *Gaps and contradictions* entry becomes a Section 10 entry, merged only where two digests report the same thing. Cite the source file each digest cites, never the digest: it is a staging file, regenerated whenever the source changes. Record the partition plan, with the file count and coverage of each partition, in the metadata block.
+
+The digests are intermediate files. Leave them in `output/.staging/application-analysis/` for provenance. They are regenerated whenever the source changes, and reused when a run resumes on unchanged source; the analysis itself is always written fresh from them. To force a fresh run on unchanged source, the user deletes `output/.staging/application-analysis/`.
 
 ### Step 5: Write output
 
@@ -275,7 +324,8 @@ Include at minimum: contradictions between two sources describing the same thing
 ## Output guidance
 
 - **Number every top-level section, using the numbers in this spec** — e.g. `## 3. Subdomains`. The headings below are shown at `###` because they are nested inside this document; in your output file they are top-level, so write them at `##`. What matters is that the number is present and the numbering is unbroken: the CLI confirms every mandatory section exists by counting numbered headings, and an unnumbered or missing one may be read as a truncated run.
-- **Cite source file paths** in every section so the reader can trace claims back to code.
+- **Cite source file paths** in every section so the reader can trace claims back to code. Copy each path from a listing rather than reconstructing it from the artefact's name: generated file names can be shortened or carry a hash, and a reconstructed path that does not exist breaks the trace.
+- **Never quote personal data**, including a personal name embedded in an artefact's name (a developer's test rule, say). Refer to the artefact by type and location, say a name was withheld, and record in Section 10 that it exists, since a rewrite should know what is test scaffolding.
 - **Be exhaustive** — include all discovered logic, not just highlights. This output is reference material for PRD generation; completeness matters more than brevity.
 - **Cover the input, not a sample of it.** Every artefact you read must appear somewhere in the analysis. Length is not the target: a section is finished when it accounts for everything in the source that bears on it, however long that takes. Judge each section by coverage, not by size relative to its neighbours.
   - **A short section is correct when the source is genuinely empty or absent.** If there are no triggers, say so, state what you looked for and where, and stop. Do not pad it to match a long section — inventing bulk to fill a heading is worse than brevity, because it buries the finding.

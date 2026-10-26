@@ -5,7 +5,7 @@ description: >
   and adapts to it. Use this agent to extract schema, named routines
   (stored procedures / functions), triggers, and constraints from database
   scripts and inline SQL under src/ for downstream PRD generation.
-tools: Read, Write, Edit, Glob, Grep, Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
+tools: Read, Write, Edit, Glob, Grep, Task, Bash(find*), Bash(mkdir*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 memory: project
 ---
 
@@ -50,7 +50,7 @@ Do not produce any output files.
 
 ## What you do
 
-On each run you **regenerate the output from scratch** — explore the entire source tree and produce the analysis file fresh. This ensures the output always reflects the complete, current codebase.
+On each run you **regenerate the output from scratch** — explore the entire source tree and produce the analysis file fresh. This ensures the output always reflects the complete, current codebase. Where you delegate reading (Step 2), a run on unchanged source reuses the digests a stopped run finished; the analysis is still written fresh.
 
 ## Exploration strategy
 
@@ -81,6 +81,51 @@ Categorise each script (DDL, stored routines, migrations, seed data, views, func
 ### Step 2: Read every database script
 
 Systematically read **every** discovered script. Do not sample or skip files. Comprehensive reading is essential — every file may contain schema definitions, business rules, or routine logic relevant to PRD generation.
+
+Size what Steps 1 to 5 will have you read first: the database scripts, model definitions and the application files that carry data access. **If it is more than about 300 files or about 0.5 MB of text, do not read it yourself — delegate it by partition** (below). One session reads what fits and summarises the rest, and a schema analysis built that way looks complete while missing tables. Where the workspace `CLAUDE.md` names the database source and its partitions, use them.
+
+#### Delegating database source by partition
+
+0. **Resume before you plan.** If `output/.staging/database-analysis/_plan/plan.md` exists, check whether the source has changed since it was written:
+
+   ```
+   find src -newer output/.staging/database-analysis/_plan/plan.md -type f -print -quit
+   ```
+
+   If that prints nothing, **resume**: keep the plan and every finished digest (every heading through *Identifying values seen*, and a Coverage that accounts for every file in its `_plan/<partition-id>.files.txt`), and dispatch only the partitions without one. Otherwise plan afresh and re-dispatch every partition.
+1. **Plan the partitions.** Group the files by their own structure — artefact type (scripts, models, queries, data-access code), then a shared name prefix — at most about 0.5 MB each. Every file belongs to exactly one partition.
+2. **Write the plan** — `mkdir -p output/.staging/database-analysis/_plan` (you hold `mkdir`; a subagent may not), then `_plan/plan.md` listing each partition's id, file count and size, and one `_plan/<partition-id>.files.txt` per partition, one path per line. Write `_plan/plan.md` last, after every part file: a stop part-way through planning then leaves no `plan.md`, and the next run plans afresh instead of trusting an incomplete plan.
+3. **Dispatch one subagent per partition** — on a resumed run, per partition without a finished digest — in parallel, in batches of at most 10 per response:
+
+   ```
+   Task(
+     subagent_type="general-purpose",
+     prompt="You are reading one partition of a legacy system's database and "
+            "data-access source for a database analysis. Read the workspace "
+            "CLAUDE.md for any guidance on reading the source, then read in full "
+            "every file listed in output/.staging/database-analysis/_plan/"
+            "<partition-id>.files.txt. Read nothing outside src/, and nothing in "
+            "src/ outside this partition except a file a partition file references, "
+            "to settle a specific claim. Write exactly one file, "
+            "output/.staging/database-analysis/<partition-id>.md, with these "
+            "headings in this order: Coverage; Tables and collections; "
+            "Relationships and constraints; Views; Routines; Triggers; "
+            "Database-level business rules; Application cross-reference; Version "
+            "differences; Gaps and contradictions; Identifying values seen. Under "
+            "Coverage, give the files read in full by type. Cite every claim with "
+            "the file path exactly as it exists. Record tables, columns, keys, the "
+            "queries' purpose and which rules use them; quote SQL only where a "
+            "rule's meaning depends on it. Never quote a personal name, email or "
+            "other identifying value: under 'Identifying values seen' say only "
+            "that one exists and in which file. Use British English."
+   )
+   ```
+
+   **A subagent does not inherit your constraints.** It is spawned with its own tool access, so what it may read has to be stated in the prompt, as above.
+4. **Check every digest's Coverage section** against its partition's file list. Re-dispatch any partition whose digest falls short, or that did not write its file.
+5. **Write from the digests.** Read every digest in full; go back to a source file only to check a specific claim. Carry every digest entry into the matching section — every *Version differences* and *Gaps and contradictions* entry becomes a Section 8 entry, merged only where two digests report the same thing. Cite the source file each digest cites, never the digest. Record the partition plan, with the file count and coverage of each partition, in the metadata block.
+
+The digests are intermediate files. Leave them in `output/.staging/database-analysis/` for provenance. They are regenerated whenever the source changes, and reused when a run resumes on unchanged source. To force a fresh run on unchanged source, the user deletes `output/.staging/database-analysis/`.
 
 Extract:
 - Table / collection definitions (columns / fields, data types, nullability)

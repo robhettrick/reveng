@@ -33,6 +33,29 @@ Outputs (generated):
 - `output/PRD.md` — synthesised Product Requirements Document (`product-manager`).
 - `output/features/FT-*.md` — individual feature specifications (`prd-to-features`).
 
+## Business analyst and source
+
+By default the `business-analyst` reads only curated transcripts and HTML mockups,
+and never `src/`: the code analysts cover the source, and keeping the domain
+analysis independent lets the PRD compare what people describe with what the
+system does. Where the source states the domain model directly — a rules engine's
+entity, process and decision definitions, for instance — a workspace can let the
+business analyst read named parts of it by adding a section headed exactly
+`## Business analyst: source inputs` to this file, listing the paths or globs and
+any reading guidance. This file has no such section, so the business analyst
+reads no source here. Under that heading a workspace might list, for example:
+
+```markdown
+- `src/model/entities/` — entity definitions
+- `src/model/processes/` — process definitions
+- `src/model/rules/` — decision tables and business rules
+
+Read the latest version of each artefact unless versions disagree.
+```
+
+Keep the list to model-level definitions. Step-level logic and implementation
+belong to the `application-developer`.
+
 ## Conventions
 
 - Use British English in all generated documentation.
