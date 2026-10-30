@@ -5,7 +5,7 @@ description: >
   Product Requirements Document. Requires the four analysis files to exist
   before running — the reveng CLI runs the analyst agents as separate steps.
   This agent synthesises only; it launches no analysts.
-tools: Read, Write, Edit, Glob, Skill, Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
+tools: Read, Write, Edit, Glob, Grep, Skill, Task, Bash(wc*), Bash(find*), Bash(mkdir*), Bash(cat output/.staging/prd/*), Bash(cat >> output/*), Bash(cat >> /workspace/output/*)
 skills:
   - validate-mermaid
 memory: project
@@ -27,6 +27,8 @@ Use British English in all output.
 Plus one optional fifth file, **if it exists**:
 
 - `output/open-question-answers.md`
+
+An analysis may move part of its content into an appendix it names, such as `output/application-analysis-version-differences.md`. An appendix an analysis names is part of that analysis; read it as such. Nothing else in `output/` is input.
 
 **Never read raw sources** (`src/`, `transcripts/`, `screenshots/`, `docs/`, `feedback/`). Your sole inputs are the analysis files produced by the specialist agents.
 
@@ -64,7 +66,7 @@ widen the rewrite to capability nothing analysed. Leave it alone.
 
 ## What you do
 
-On each run you **regenerate the PRD from scratch** — read every available analysis file and produce the PRD fresh. This ensures the output always reflects the complete, current set of analyses.
+On each run you **regenerate the PRD from scratch** — read every available analysis file and produce the PRD fresh. This ensures the output always reflects the complete, current set of analyses. Where the analyses are too large to read yourself, you delegate drafting by PRD section (Step 5); a run on unchanged analyses reuses the drafts a stopped run finished, and the PRD is still assembled fresh.
 
 ## Execution sequence
 
@@ -90,7 +92,7 @@ If an analysis file is missing when you reach Step 3, **stop and report which fi
 
 ### Step 3: Collect analysis files
 
-Attempt to Read all four analysis files:
+Confirm all four analysis files exist, with Glob, and size them with `wc -c`:
 
 - `output/domain-analysis.md`
 - `output/interaction-analysis.md`
@@ -113,7 +115,70 @@ on each analysis's own "Gaps, Contradictions and Open Questions" section.
 
 ### Step 5: Read, cross-reference, and write PRD
 
+**If the four analyses together are more than about 1 MB (roughly 250,000 tokens), do not read them yourself — delegate drafting by PRD section** (below). One session cannot hold them; it reads what fits, and the PRD it writes looks complete while resting on part of the evidence. Otherwise read all four yourself, as follows.
+
 Read all four analysis files. Note domain terms, business concepts, process descriptions, entity definitions, business rules, workflows, screens, integrations, and security constraints. Reconcile where multiple analyses describe the same concepts into a unified view. Then write the PRD **incrementally**, as described below.
+
+#### Delegating the PRD by section
+
+0. **Resume before you plan.** If `output/.staging/prd/_plan/plan.md` exists, check whether any analysis has changed since it was written:
+
+   ```
+   find output -maxdepth 1 -name '*-analysis*.md' -newer output/.staging/prd/_plan/plan.md
+   ```
+
+   If that prints nothing, **resume**: keep the plan, keep every finished draft (its `<part-id>.notes.md` exists and ends with its `## Done` line), and dispatch only the parts without one. Otherwise plan afresh and re-dispatch every part.
+1. **Plan the parts.** For each PRD section, find the analysis sections it draws on (the table below), and locate each by its heading with `Grep -n` to get its line range. A part is one PRD section, or a slice of one, drafted from at most about 0.5 MB of analysis text. Split a section whose sources are larger along the sources' own subsections (`####` headings, such as one bounded context, one group of entities, one theme of open questions), and never cut through a subsection.
+
+   | PRD section | Draws on |
+   |---|---|
+   | 2. Actors; 9. Roles & Permissions; 10. Security Constraints | domain §5; interaction actors and roles; application §2; the security and access gaps in each analysis |
+   | 3. Domain Model | domain §1–4; application §6; database §1–2 |
+   | 4. Key User Interfaces & Screens | interaction §1 and §3 |
+   | 5. Business Rules & Processes; 7. Computed Fields & Formulas | domain §6; application §5; database §6 |
+   | 6. Workflows; 9. Behaviour | interaction §2; application §3–4 |
+   | 8. Reports & Analytics | application §8; database §3 |
+   | 11. External Systems & Integrations; 12. API Contracts | domain §4; application §7; database §7 |
+   | 13. Open Questions; 14. Known Limitations & Deficiencies | every analysis's Gaps section and its appendices; `output/open-question-answers.md` if present |
+   | 15. Data Migration Considerations; 16. Non-Functional Requirements | database §1–7; application §9 |
+   | 17. Glossary | domain §1 |
+
+   Analyses number their sections in their own spec; match on heading text where a workspace's analyses differ. Write the plan before dispatching: `mkdir -p output/.staging/prd/_plan` (you hold `mkdir`; a subagent may not), then `_plan/plan.md`, listing every part in PRD order with its id, PRD section, and sources, and one `_plan/<part-id>.md` per part that holds **everything the subagent needs**: the PRD section's specification copied from this definition (the subagent cannot see it), the files and line ranges to read, and whether the part opens its section (`## N. Title`) or continues it (`###` and below). You write sections 1 (Overview) and 18 (Sources) yourself; every other section is drafted by parts. Write `_plan/plan.md` last, after every part file: a stop part-way through planning then leaves no `plan.md`, and the next run plans afresh instead of trusting an incomplete plan.
+2. **Dispatch one subagent per part**, in parallel, in batches of at most 10 per response:
+
+   ```
+   Task(
+     subagent_type="general-purpose",
+     prompt="You are drafting one part of a Product Requirements Document. "
+            "Read output/.staging/prd/_plan/<part-id>.md, which gives the PRD "
+            "section's specification and the analysis files and line ranges to "
+            "read. Read exactly those ranges, in full, and nothing else: no src/, "
+            "transcripts, mockups or other corpora. Write two files. "
+            "output/.staging/prd/<part-id>.md holds only this part's PRD text, "
+            "at the heading level the part file gives, ready to be concatenated "
+            "unedited into the PRD. output/.staging/prd/<part-id>.notes.md holds: "
+            "the line ranges read in full; every conflict between analyses you "
+            "met, as a candidate open question; and a last line '## Done'. "
+            "Document only what the analyses contain; cite the analysis section "
+            "for every claim; write one Given/When/Then scenario for every "
+            "distinct behaviour the ranges describe; no source code or SQL. Give "
+            "open questions IDs of the form OQ-<part-id>-<n>, never a bare number. "
+            "Never quote a personal name, email or other identifying value. "
+            "Use British English."
+   )
+   ```
+
+   **A subagent does not inherit your constraints**, so what it may read is stated in the prompt, as above.
+3. **Check every part.** Its notes file must exist, account for every line range in its part file, and end with `## Done`. Re-dispatch any that fall short.
+4. **Assemble the PRD.** Write the title block and section 1 yourself, from the analyses' metadata blocks and the parts' notes. Then append each part's draft, in plan order, by concatenation, never by re-typing it:
+
+   ```
+   cat output/.staging/prd/<part-id>.md >> output/PRD.md
+   ```
+
+   Append, at the end of section 13, the cross-analysis conflicts the notes files list that no part's open questions already carry, as further `OQ-` entries. Then write section 18 yourself. Validate and verify as in Step 6.
+
+The drafts are intermediate files. Leave them in `output/.staging/prd/` for provenance; they are regenerated whenever an analysis changes. To force a fresh run on unchanged analyses, the user deletes `output/.staging/prd/`.
 
 #### Writing the PRD incrementally
 

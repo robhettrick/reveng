@@ -5,7 +5,7 @@ description: >
   Reads the PRD, identifies feature boundaries from bounded contexts and
   workflows, then generates a complete feature file per feature by spawning
   parallel feature-writer agents.
-tools: Read, Glob, Bash(mkdir*), Agent
+tools: Read, Glob, Grep, Bash(mkdir*), Bash(wc*), Bash(find*), Agent
 memory: project
 argument-hint: "[prd-path] (defaults to output/PRD.md)"
 ---
@@ -24,9 +24,11 @@ If the argument is empty or not provided, default to `output/PRD.md`.
 
 ### Step 1: Validate the PRD exists
 
-Use the Read tool to open the PRD file. If the file does not exist, stop and tell the user:
+Use Glob to confirm the PRD file exists. If it does not, stop and tell the user:
 
 > Missing PRD at [path]. Please run the **product-manager** agent first to produce the PRD before running this agent.
+
+Size it with `wc -c`. **If it is more than about 1 MB (roughly 250,000 tokens), you cannot read it whole** — follow *Working from a large PRD* (after Step 8) wherever a step below says to read the PRD or to paste its text. One session that reads what fits plans features from part of the requirements, and the features it misses never reach the build.
 
 ### Step 2: Check for existing features
 
@@ -43,9 +45,16 @@ If the index exists:
   finishing or starting again. Resume at the first planned feature with no file, and work
   through the remainder in build order.
 - Skip Steps 3, 4 and 6; go straight to generating the missing features. Read the PRD
-  sections each missing feature needs, not the whole PRD.
+  sections each missing feature needs, not the whole PRD; for a large PRD, each feature's
+  manifest in `output/features/.plan/` names them.
+- For a large PRD, first check the PRD has not changed since the plan was made:
+  `find output/PRD.md -newer output/features/INDEX.md` must print nothing. If it prints
+  the PRD, the manifests' line ranges may no longer point at the right text: say so and
+  ask whether to plan again rather than writing features from stale ranges.
 - If the index is unreadable or plainly inconsistent with the files on disk, say so and
   ask whether to start again rather than guessing.
+
+If no index exists but `output/features/.plan/PROPOSED-PLAN.md` does, a previous run planned and is waiting for confirmation. If the request you were given confirms the plan, skip Steps 3 and 4 and continue from Step 5 with that plan, exactly as it stands. Otherwise do not plan again: tell the user the plan is waiting there, and that `reveng decompose --confirm-plan` accepts it — unless the PRD has changed since (`find output/PRD.md -newer output/features/.plan/PROPOSED-PLAN.md` prints the PRD), in which case say so and plan afresh.
 
 If no index exists but feature files do, a run predating this instruction left them.
 Read each one, note the highest feature and user-story ids, and continue from there.
@@ -57,7 +66,7 @@ residue of an interrupted write, and they are not the plan.
 
 ### Step 3: Read and internalise the PRD
 
-Read the entire PRD, then use `ultrathink` to deeply analyse its contents. Before generating any content, identify the natural feature boundaries by examining:
+Read the entire PRD — or, for a large PRD, the shared sections and the surveys (*Working from a large PRD*, steps 1 to 4) — then use `ultrathink` to deeply analyse its contents. Before generating any content, identify the natural feature boundaries by examining:
 
 - **Bounded contexts** (Section 3) — each context is a candidate feature area
 - **Key User Interfaces & Screens** (Section 4) — screens that form a cohesive workflow
@@ -224,7 +233,11 @@ Then check the plan delivers what the ordering is for:
 Report the check with the plan — state the demo outcome for the first few features
 explicitly, so the reader can see the ordering works rather than taking it on trust.
 
-Wait for the user to confirm or adjust the plan before proceeding.
+**Write the plan down, then get it confirmed.** `mkdir -p output/features/.plan`, then write the plan, with the check above, to `output/features/.plan/PROPOSED-PLAN.md`, headed as awaiting confirmation (for a large PRD, the per-feature manifests sit beside it). Then:
+
+- **In an interactive session,** present the plan and wait for the user to confirm or adjust it. Apply any adjustment to the file before going on.
+- **When the request you were given says the plan is confirmed,** go on to Step 5 using the plan in that file exactly as it stands, including any edits the user made to it or its manifests. Do not plan again.
+- **Otherwise,** as in a run started by `reveng decompose`, where no one can answer: stop here. Tell the user the plan is in `output/features/.plan/PROPOSED-PLAN.md`, that they can edit it or its manifests, and that `reveng decompose --confirm-plan` accepts it and writes the features. Write no index and no feature.
 
 ### Step 5: Ensure the output directory exists
 
@@ -268,7 +281,7 @@ changed during generation. The index must end the run agreeing with the files on
 
 ### Step 7: Generate each feature file in parallel
 
-For each feature in the confirmed plan, launch a `feature-writer` agent using the Agent tool. Fire all agents in a single message — do not wait for one to finish before launching the next.
+For each feature in the confirmed plan, launch a `feature-writer` agent using the Agent tool, in batches of at most 10 per message, and mark each feature `written` in the index as its file lands. A stopped run then resumes from the index (Step 2) with every finished feature kept.
 
 **One feature is one file, written in one Write call.** If a feature is too large to
 write in a single call, it is too large as a feature — that is a signal to split the
@@ -295,15 +308,15 @@ Each `feature-writer` agent must receive a fully self-contained prompt. Construc
 - First user story ID: the globally sequential US-XXX number this feature starts from (calculate by summing story counts of all lower-numbered features)
 
 **Feature-specific PRD content:**
-Paste the verbatim text of every PRD section relevant to this feature — bounded context definition, relevant screens, relevant workflows, relevant business rules, relevant entities and attributes, relevant legacy pain points. Do not summarise. Extract and paste the actual PRD text.
+Paste the verbatim text of every PRD section relevant to this feature — bounded context definition, relevant screens, relevant workflows, relevant business rules, relevant entities and attributes, relevant legacy pain points. Do not summarise. Extract and paste the actual PRD text. For a large PRD, give instead the PRD path and the path of the feature's manifest, and tell the writer to read exactly the line ranges it lists (see *Working from a large PRD*).
 
 **Relevant PRD open questions:**
-Paste the full text of every PRD open question that bears on this feature — the question, its context, and its impact. The feature-writer must restate these as local rows in its own Open Questions section, so it needs the wording, not the identifier. A worker given only "Open Question 20" will emit an unresolvable pointer into a file whose reader has no PRD.
+Paste the full text (for a large PRD, the manifest's open-question line ranges) of every PRD open question that bears on this feature — the question, its context, and its impact. The feature-writer must restate these as local rows in its own Open Questions section, so it needs the wording, not the identifier. A worker given only "Open Question 20" will emit an unresolvable pointer into a file whose reader has no PRD.
 
 If no PRD open question bears on this feature, include the section with the single word "None" — do not omit the heading, as the worker is told to expect it.
 
 **Shared PRD context:**
-Paste the following from the PRD verbatim, for every agent — this ensures clean feature boundaries:
+Paste the following from the PRD verbatim, for every agent — this ensures clean feature boundaries (for a large PRD, the manifest lists their line ranges instead):
 - Full actors/personas table
 - Full glossary
 - Any global business rules that are not specific to one feature
@@ -322,6 +335,40 @@ Return a summary containing:
 - Confirmation that `output/features/INDEX.md` was written, and the first three features
   in build order with what each demonstrates
 - Any open questions or gaps noted during decomposition
+
+## Working from a large PRD
+
+A PRD over about 1 MB is planned from a survey rather than a reading, and each feature writer reads its own slice of the PRD instead of having it pasted into its prompt. Every rule above still applies: vertical slices, the walking skeleton, the build order, the index written first, and the standalone rule.
+
+1. **Read what every feature shares, and map the rest.** Read in full the overview, the actors, the bounded contexts and context map, and the glossary — they are the shared context, and the bounded contexts are your first cut. For everything else, `Grep -n '^#{2,4} '` gives the PRD's headings with their line numbers; read that map a section at a time.
+2. **Resume before you survey.** If `output/features/.survey/plan.md` exists and `find output/PRD.md -newer output/features/.survey/plan.md` prints nothing, keep every finished survey (it ends with `## Done`) and survey only the ranges without one.
+3. **Survey the PRD by delegation.** Divide the sections that hold feature content — screens, business rules, workflows, behaviour, computed fields, reports, roles, integrations, API contracts, open questions, known limitations, data migration — into ranges of at most about 0.5 MB, cut at `##` or `###` headings. `mkdir -p output/features/.survey` (you hold `mkdir`; a subagent may not), write one `<range-id>.range` file per range giving its line numbers, then `plan.md` last, listing the ranges. Dispatch one subagent per range, at most 10 per message:
+
+   ```
+   Agent(
+     subagent_type="general-purpose",
+     prompt="You are surveying one range of a Product Requirements Document for "
+            "feature decomposition. Read lines <start> to <end> of <prd-path> in "
+            "full, paging with offset and limit, and nothing else. Write "
+            "output/features/.survey/<range-id>.md listing every user-facing "
+            "capability or journey the range specifies: a short name; one line on "
+            "what a user achieves; its bounded context; the PRD line ranges that "
+            "specify it (L<start>-L<end>), covering its screens, rules, workflow "
+            "steps, behaviour scenarios and entities within this range; the IDs and "
+            "line ranges of open questions that bear on it; and its size in lines. "
+            "Where a capability is only partly specified in this range, say so: "
+            "another survey holds the rest. List cross-cutting material (shared "
+            "rules, reference data, platform behaviour) separately. End the file "
+            "with a line '## Done'. Quote no personal name, email or other "
+            "identifying value. Use British English."
+   )
+   ```
+
+4. **Plan from the surveys.** Merge the surveys' capabilities that are the same user goal, then plan as Step 4 describes. Give each feature its **PRD slice**: the line ranges, across all surveys, that specify it, plus the line ranges of its open questions. **Cap each slice at about 250 KB** (roughly 60,000 tokens), so one writer can read it and still write the feature. A feature over the cap is a feature to split, by the thin-path rule: happy path first, variants as later features.
+5. **Write a manifest per feature** before the index: `mkdir -p output/features/.plan`, then `output/features/.plan/FT-XXX.md` listing the PRD path, the feature's slice (line ranges with a few words on what each holds), its open-question ranges, and the shared-context ranges (actors, glossary, global rules). Then write `INDEX.md` as Step 6 describes.
+6. **Each writer reads its manifest.** In Step 7, give each `feature-writer` the PRD path and its manifest path in place of pasted PRD text, and tell it to read exactly the ranges the manifest lists, in full, and nothing else. Target-implementation constraints, metadata and the template and authoring rules are still pasted into the prompt.
+
+The survey and manifests are intermediate files. Leave them in `output/features/` for provenance; a PRD that changes after planning means planning again.
 
 ---
 

@@ -129,13 +129,9 @@ When the input set is larger than 50 files, write a summary block instead:
 
 ```markdown
 <!-- Input files processed:
-Read 3,725 rendered rule files across 4 journey slices under src/.
-- src/customer-create/: 1,204 files (activities 312, flows 88, when 274, decision tables 96, properties 434)
-- src/start-work-schedule/: 987 files (activities 241, flows 64, when 210, decision tables 71, properties 401)
-- ... one line per slice ...
-Coverage: flows, flow actions, decision tables/trees, validations and connectors read
-in full; activities read at step level; properties inventoried. Slice metadata
-(INDEX.md, coverage.json) consulted for every slice.
+- output/html/: 38 mockups, all read in full, across three journeys
+  (customer-registration 16, work-schedule 18, conduct-tb-test 4)
+- output/transcripts/: 16 curated transcripts, all read in full
 -->
 ```
 

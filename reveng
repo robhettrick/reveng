@@ -913,6 +913,7 @@ parse_flags() {
   SYNTH_ANALYSES_ONLY="false"
   SYNTH_PRD_ONLY="false"
   SYNTH_FORCE="false"
+  DECOMPOSE_CONFIRM_PLAN="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -982,6 +983,14 @@ parse_flags() {
           return 1
         fi
         SYNTH_ANALYSES_ONLY="true"
+        shift
+        ;;
+      --confirm-plan)
+        if ! flag_allowed "--confirm-plan" ${allowed[@]+"${allowed[@]}"}; then
+          echo "Error: --confirm-plan is not valid for this command." >&2
+          return 1
+        fi
+        DECOMPOSE_CONFIRM_PLAN="true"
         shift
         ;;
       --prd-only)
@@ -1280,7 +1289,7 @@ EOF
   echo "▸ Synthesising PRD"
   REVENG_PHASE="/synth/prd"
   run_claude \
-    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; read the four analysis files and synthesise output/PRD.md from them. If output/open-question-answers.md exists, read it too and apply the subordination rules in your agent definition; if it does not, that is normal and not an error." \
+    "Run the \`product-manager\` agent to produce the PRD. All four analysis files already exist in output/ — do not launch any analyst agents; synthesise output/PRD.md from them as your agent definition describes, delegating drafting by PRD section if they are too large to read yourself. If output/open-question-answers.md exists, read it too and apply the subordination rules in your agent definition; if it does not, that is normal and not an error." \
     "$MODEL" \
     "$VERBOSE" \
     "$DRY_RUN" \
@@ -1482,7 +1491,7 @@ EOF
 }
 
 cmd_decompose() {
-  parse_flags "$DECOMPOSE_DEFAULT_MODEL" "$DECOMPOSE_DEFAULT_EFFORT" "$DECOMPOSE_DEFAULT_EFFORT" -- "$@"
+  parse_flags "$DECOMPOSE_DEFAULT_MODEL" "$DECOMPOSE_DEFAULT_EFFORT" "$DECOMPOSE_DEFAULT_EFFORT" --confirm-plan -- "$@"
 
   if [[ "$SHOW_HELP" == "true" ]]; then
     cat <<'EOF'
@@ -1497,16 +1506,34 @@ Options:
                        (default: xhigh)
   -v, --verbose        Show Claude commands and raw output
   --dry-run            Print what would be executed without running
+  --confirm-plan       Accept the plan a previous run proposed in
+                       output/features/.plan/PROPOSED-PLAN.md (edit it first
+                       to change it), then write the index and the features
   --run-id ID          Label this run in the metrics log
   -h, --help           Show this help message
+
+A run with no confirmed plan stops after proposing one: review
+output/features/.plan/PROPOSED-PLAN.md, then run again with --confirm-plan.
 EOF
     return 0
+  fi
+
+  local prompt="Run the \`prd-to-features\` agent to decompose the PRD into individual feature specifications."
+  if [[ "$DECOMPOSE_CONFIRM_PLAN" == "true" ]]; then
+    if [[ ! -f "output/features/.plan/PROPOSED-PLAN.md" && ! -f "output/features/INDEX.md" ]]; then
+      echo "Error: --confirm-plan, but there is no proposed plan at output/features/.plan/PROPOSED-PLAN.md." >&2
+      echo "       Run 'reveng decompose' first to propose one." >&2
+      return 1
+    fi
+    prompt+=" The user has confirmed the plan in output/features/.plan/PROPOSED-PLAN.md, including any edits they made to it or its manifests: do not survey or plan again. Write output/features/INDEX.md from it (Step 6) unless it already exists, then generate every feature not yet written (Step 7)."
+  else
+    prompt+=" This run is not interactive: if no confirmed plan exists, propose one and stop, as your agent definition describes; do not wait for an answer."
   fi
 
   validate_inputs decompose
   init_run_id "decompose" "$MODEL"
   run_claude \
-    "Run the \`prd-to-features\` agent to decompose the PRD into individual feature specifications." \
+    "$prompt" \
     "$MODEL" \
     "$VERBOSE" \
     "$DRY_RUN" \

@@ -294,7 +294,7 @@ Place your raw material in the reveng workspace (the directory where you ran `re
 | `output/transcripts/*_curated.*` | `curate-transcript` | Transcripts with off-topic content removed, keeping the source extension (intermediate) |
 | `output/legacy-specs/*.md` | `curate-specification` | Structured markdown per specification document extracted from a documentation export — what the legacy system was *specified* to do. Distinct from `output/features/`, which specifies its replacement. The workspace `CLAUDE.md` may name a different directory for a given corpus |
 | `output/reference/*.md` | `confluence-curator` | Catalogue artefacts converted from the export's own spreadsheets — a document index, a roles or permissions matrix — plus the reconciliation between them. Built before any specification, since they resolve identifiers and which documents are live |
-| `output/domain-analysis.md` | `business-analyst` | Comprehensive domain analysis (ubiquitous language, bounded contexts, subdomains, context map) extracted from curated transcripts and HTML mockups |
+| `output/domain-analysis.md` | `business-analyst` | Comprehensive domain analysis (ubiquitous language, bounded contexts, subdomains, context map) extracted from curated transcripts and HTML mockups, plus any source the workspace opts in (see [Business analyst and source](#business-analyst-and-source)) |
 | `output/interaction-analysis.md` | `interaction-analyst` | Comprehensive interaction analysis (screen inventory, user workflows with mermaid diagrams, screen navigation map) stitched from HTML mockups and curated transcripts |
 | `output/application-analysis.md` | `application-developer` | Comprehensive application analysis (workflows, behaviours, domain model, business rules, reports) extracted from source code |
 | `output/database-analysis.md` | `database-analyst` | Comprehensive database analysis (schema, stored procedures, triggers, constraints, database-level business rules) extracted from SQL and source code |
@@ -368,11 +368,11 @@ graph LR
 |-------|-------------|
 | `digital-content-curator` | Prepares raw screenshots and interview transcripts into structured, analysis-ready outputs (HTML mockups, curated transcripts) |
 | `confluence-curator` | Triages a Confluence or wiki export by evidence class and converts specification PDFs, catalogue spreadsheets, diagrams, wiki pages and transcripts into structured markdown. Builds the export's catalogues first, so identifiers and superseded documents are resolved before any specification is converted |
-| `business-analyst` | Extracts strategic DDD patterns (ubiquitous language, bounded contexts, subdomains, context map) from curated transcripts and HTML mockups for PRD generation |
+| `business-analyst` | Extracts strategic DDD patterns (ubiquitous language, bounded contexts, subdomains, context map) from curated transcripts and HTML mockups for PRD generation. Reads no source unless the workspace opts in |
 | `interaction-analyst` | Stitches HTML mockups with curated interview transcripts to produce comprehensive interaction analysis (screen inventory, user workflows, screen navigation map) for PRD generation |
-| `application-developer` | Comprehensively reads legacy application source code under `src/` to extract workflows, behaviours, domain model, business rules, and reports for PRD generation. Detects the stack and adapts to it |
-| `database-analyst` | Comprehensively reads legacy database code under `src/` to extract schema, named routines (stored procedures/functions), triggers, constraints, and database-level business rules for PRD generation. Detects the database technology and adapts to it |
-| `product-manager` | Synthesises all analysis outputs (domain, interaction, codebase, database) into a comprehensive Product Requirements Document for implementation planning. Requires curated content as a prerequisite |
+| `application-developer` | Comprehensively reads legacy application source code under `src/` to extract workflows, behaviours, domain model, business rules, and reports for PRD generation. Detects the stack and adapts to it; delegates large trees to subagents by partition |
+| `database-analyst` | Comprehensively reads legacy database code under `src/` to extract schema, named routines (stored procedures/functions), triggers, constraints, and database-level business rules for PRD generation. Detects the database technology and adapts to it; delegates large trees to subagents by partition |
+| `product-manager` | Synthesises all analysis outputs (domain, interaction, codebase, database) into a comprehensive Product Requirements Document for implementation planning. Requires curated content as a prerequisite; delegates drafting by PRD section when the analyses are large |
 | `open-question-resolver` | Answers the open questions the four analyses raised, using a second corpus the analysts were not permitted to read. Classifies each question as inside or outside the analysed boundary and imports content only for those inside it, so the analyses are resolved rather than widened. Writes `output/open-question-answers.md` and never edits an analysis |
 | `prd-to-features` | Decomposes a PRD into individually deliverable feature specifications by spawning parallel `feature-writer` agents. Each feature includes user stories, wireframes, acceptance criteria, and effort estimates |
 | `feature-writer` *(internal)* | Worker agent spawned by `prd-to-features`. Writes a single feature specification file using the 21-section feature template. Not for direct use. |
@@ -422,6 +422,7 @@ flowchart TB
     fw --> features(["output/features/FT-*.md"])
 
     src --> appdev & dbanalyst
+    src -.->|opt-in only| ba
     html & curated --> ba & ia
 ```
 
@@ -429,9 +430,35 @@ flowchart TB
 |-------|------------|-----------------------|
 | Prerequisite — Content curation (manual) | `image-to-html` and `curate-transcript` skills | Run before launching `product-manager` |
 | 1 — Code analysis | `application-developer` and `database-analyst` read `src/` independently | Stage 2 |
-| 2 — Content analysis | `business-analyst` and `interaction-analyst` consume curated outputs | Stage 1 |
+| 2 — Content analysis | `business-analyst` and `interaction-analyst` consume curated outputs; the business analyst also reads named source paths if the workspace opts in | Stage 1 |
 | 3 — Synthesis | `product-manager` reads all four analyses and writes `output/PRD.md` | None; depends on Stages 1 and 2 |
 | 4 — Feature decomposition (manual) | `prd-to-features` agent reads `output/PRD.md` and writes individual feature specs to `output/features/` | Run after reviewing the PRD |
+
+### Business analyst and source
+
+By default the `business-analyst` reads only curated transcripts and HTML mockups. The code analysts own `src/`, and keeping the domain analysis independent of it lets the `product-manager` compare what people describe with what the system does, rather than reading the same code twice.
+
+Some stacks state the domain model in the source almost directly — a rules engine's entity, process and decision definitions, for instance — and there a domain analysis without it misses boundaries and rules the system declares. A workspace can opt in by adding a section headed exactly `## Business analyst: source inputs` to its `CLAUDE.md`, listing the paths or globs the business analyst may read and any reading guidance. The analyst then reads exactly those paths, keeps implementation detail out, and labels every claim with whether it rests on a transcript, a mockup or the source, recording disagreements as open questions. Without the section, it reads no source at all. See `templates/workspace-CLAUDE.md` for an example.
+
+When the opted-in source is larger than one session can read in full (more than about 300 files or 0.5 MB), the business analyst delegates it: one `general-purpose` subagent per partition of about 0.5 MB, each writing a digest to `output/.staging/domain-analysis/`, which the analyst checks for coverage and writes the analysis from. The workspace's source-inputs section can name the partitions; otherwise the analyst derives them from the source's directories or name prefixes. Digests are working files: the analysis cites the source files they cite, never the digests, and carries every gap and version disagreement they report into its open questions.
+
+### Application developer on large source
+
+The `application-developer` delegates in the same way when `src/` is over about 300 files or 0.5 MB: one subagent per partition, each writing a digest to `output/.staging/application-analysis/`, checked for coverage before the analysis is written from them. Without it, a large tree is read to the depth that fits and the rest summarised. The workspace `CLAUDE.md` can name the partitions, and say which version to read where the source holds several versions of the same artefact.
+
+The `database-analyst` delegates its source the same way, to `output/.staging/database-analysis/`.
+
+### Product manager on large analyses
+
+When the four analyses together exceed about 1 MB, the `product-manager` cannot read them in one session either. It plans the PRD in parts — one PRD section, or a slice of one, drafted from at most about 0.5 MB of the analysis sections that section draws on — and dispatches one subagent per part. Each writes its draft and a notes file to `output/.staging/prd/`. The product manager writes the overview and sources itself, concatenates the drafts in order, and adds the cross-analysis conflicts the notes list to the Open Questions. An appendix an analysis names (for example `output/application-analysis-version-differences.md`) counts as part of that analysis.
+
+### Decomposing a large PRD
+
+Over about 1 MB, `prd-to-features` does not read the PRD whole. Subagents survey it in ranges of about 0.5 MB, listing each user-facing capability with the PRD line ranges that specify it (`output/features/.survey/`). The decomposer plans vertical slices from the surveys and the shared sections, capping each feature's PRD slice at about 250 KB and splitting any feature over it, and writes a manifest per feature (`output/features/.plan/`). Each `feature-writer` then reads its own ranges instead of having them pasted, and writes a feature that still stands alone. Writers run ten at a time, and the index records which features are written, so a stopped run resumes.
+
+A headless `reveng decompose` cannot wait for you to confirm the plan, so it stops after proposing one in `output/features/.plan/PROPOSED-PLAN.md`. Review it, edit it or its manifests if you want changes, then run `reveng decompose --confirm-plan` to write the index and the features. From then on a plain `reveng decompose` resumes from the index.
+
+All delegating agents resume by default. The plan is written to `output/.staging/<analysis>/_plan/` before any subagent starts. If a run stops part-way (a usage limit, say) and is rerun on source that has not changed since `_plan/plan.md` was written, the analyst reuses the plan and every finished digest, and only reads the partitions still outstanding. A change under `src/` means a fresh plan. To force a fresh run anyway, delete `output/.staging/<analysis>/`.
 
 ## Troubleshooting
 
